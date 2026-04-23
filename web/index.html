@@ -37,6 +37,41 @@
 
   <title>Jarvis</title>
   <link rel="manifest" href="manifest.json">
+
+  <!--
+    iOS PWA touch-offset fix. Without this, buttons near the top of the
+    screen require tapping a few pixels ABOVE the visible icon.
+
+    Cause: apple-mobile-web-app-status-bar-style=black-translucent plus
+    viewport-fit=cover tells iOS to let the PWA content render
+    edge-to-edge, including under the status bar / notch. Flutter's
+    canvas fills the entire viewport and attaches pointer events at
+    those coordinates. But iOS reserves its own safe area for system UI,
+    and the VISIBLE content gets pushed down by safe-area-inset-top while
+    the canvas's internal coordinate system still starts at y=0. Result:
+    visual button is at y=200, hit target is at y=150.
+
+    Fix: pad the body by safe-area-inset-{top,bottom,left,right}. The
+    Flutter canvas now sizes to the visible area only; visual and tap
+    positions line up. Also explicitly zero html/body margins since
+    Safari defaults to 8px.
+  -->
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      overscroll-behavior: none;
+    }
+    body {
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      padding-left: env(safe-area-inset-left, 0px);
+      padding-right: env(safe-area-inset-right, 0px);
+      background-color: #FFF5F8;
+    }
+  </style>
 </head>
 <body>
   <!--

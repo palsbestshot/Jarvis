@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -482,6 +483,9 @@ class ChatNotifier extends Notifier<ChatState> {
       case 'plan_week_meals':
         return await _handlePlanWeekMeals(userId, toolInput);
 
+      case 'get_meal_plan_range':
+        return await _handleGetMealPlanRange(userId, toolInput);
+
       case 'save_goal':
         final goalId = await _firestoreService.saveGoal(userId, toolInput);
         final title = toolInput['title'] ?? 'goal';
@@ -803,6 +807,105 @@ class ChatNotifier extends Notifier<ChatState> {
       return '✗ Plan had no valid entries.';
     }
     return '✓ Day planned $dateKey — ${savedParts.join(" · ")}';
+  }
+
+  /// Read Rakhi's already-planned meals in a date range so Claude can
+  /// answer "what am I cooking today", "what are this week's calories",
+  /// "nutrition for Monday". Joins meal_plans docs with dish_catalog so
+  /// each slot comes back with the RESOLVED dish name + tags + prep
+  /// minutes (Claude doesn't see raw dish_ids). Defaults single-day to
+  /// today, and single-bound ranges to from_date only.
+  Future<String> _handleGetMealPlanRange(
+    String userId,
+    Map<String, dynamic> input,
+  ) async {
+    final today = _resolveDateKey('');
+    final from = _resolveDateKey((input['from_date'] ?? '').toString());
+    final toRaw = (input['to_date'] ?? '').toString().trim();
+    final to = toRaw.isEmpty ? from : _resolveDateKey(toRaw);
+
+    // Pull plans + catalog in parallel.
+    final results = await Future.wait([
+      _firestoreService.getMealPlanRange(userId, from, to),
+      _firestoreService.getDishCatalog(userId),
+    ]);
+    final plans = results[0];
+    final catalog = results[1];
+    final dishById = <String, Map<String, dynamic>>{};
+    for (final d in catalog) {
+      final id = (d['id'] ?? '').toString();
+      if (id.isNotEmpty) dishById[id] = d;
+    }
+
+    const slotLabels = {
+      'breakfast': 'Breakfast',
+      'brunch': 'Brunch',
+      'lunch': 'Lunch',
+      'eve_snacks': 'Eve snacks',
+      'dinner': 'Dinner',
+    };
+
+    // Index plans by date so we can iterate every day in the range even
+    // when some days have no doc.
+    final byDate = <String, Map<String, dynamic>>{};
+    for (final p in plans) {
+      byDate[(p['date_key'] ?? p['id'] ?? '').toString()] = p;
+    }
+
+    final days = <Map<String, dynamic>>[];
+    var cursor = DateTime.parse(from);
+    final end = DateTime.parse(to);
+    while (!cursor.isAfter(end)) {
+      String two(int n) => n.toString().padLeft(2, '0');
+      final dateKey =
+          '${cursor.year}-${two(cursor.month)}-${two(cursor.day)}';
+      final plan = byDate[dateKey];
+      final slots = <Map<String, dynamic>>[];
+      if (plan != null) {
+        for (final slotKey in slotLabels.keys) {
+          final raw = plan[slotKey];
+          if (raw is! Map) continue;
+          final dishId = (raw['dish_id'] ?? '').toString();
+          final notes = (raw['notes'] ?? '').toString();
+          final dish = dishById[dishId];
+          slots.add({
+            'slot': slotKey,
+            'slot_label': slotLabels[slotKey],
+            'dish_name': dish?['name'] ??
+                (dishId.isNotEmpty ? '(unknown dish: $dishId)' : '(empty)'),
+            if (dish?['prep_minutes'] != null)
+              'prep_minutes': dish!['prep_minutes'],
+            if (dish?['tags'] is List) 'tags': dish!['tags'],
+            if (dish?['ingredients'] is List)
+              'ingredients': dish!['ingredients'],
+            if (notes.isNotEmpty) 'notes': notes,
+          });
+        }
+      }
+      days.add({
+        'date': dateKey,
+        'weekday':
+            ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][cursor.weekday - 1],
+        'is_today': dateKey == today,
+        'planned_slots': slots,
+      });
+      cursor = cursor.add(const Duration(days: 1));
+    }
+
+    final plannedDayCount = days.where(
+      (d) => (d['planned_slots'] as List).isNotEmpty,
+    ).length;
+
+    // JSON-ish return so Claude can see structure. The chat surface
+    // shows this verbatim, but Claude uses it as tool_result input for
+    // the next turn where it composes Rakhi-facing prose.
+    return jsonEncode({
+      'from_date': from,
+      'to_date': to,
+      'days': days,
+      'planned_day_count': plannedDayCount,
+      'total_days': days.length,
+    });
   }
 
   /// Apply Claude's ingredient-driven 7-day plan to Firestore. Each

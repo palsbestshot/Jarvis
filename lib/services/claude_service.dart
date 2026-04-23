@@ -160,11 +160,18 @@ Thoughts/Notes → use save_thought tool
 
 Finance → use save_finance tool (both users)
 Goals → use save_goal tool
-Meals / meal plans (Rakhi only) — four coordinated tools:
+Meals / meal plans (Rakhi only) — five coordinated tools:
   - save_meal: plan ONE dish for ONE slot on ONE date. "Dinner tomorrow
     is Paneer Butter Masala", "Monday breakfast Poha".
   - query_dishes: read her dish catalog BEFORE suggesting, so ideas
     lean on dishes she actually uses.
+  - get_meal_plan_range: READ what's already planned for a date range.
+    Call this whenever she asks about calories, nutrition, portions,
+    or "what am I cooking today". You then estimate kcal + macros
+    from standard Indian portion sizes (see the tool description for
+    per-dish ranges + per-person scale factors for her / husband /
+    toddler). ALWAYS label numbers as "approx ±10-15%" since actual
+    portions + oil vary.
   - suggest_dish_from_ingredients: "I have tomato, paneer, onion — what
     can I make for dinner?" → you return 2-4 tagged suggestions with
     reasoning. Handler renders as tappable cards.
@@ -179,6 +186,16 @@ Meals / meal plans (Rakhi only) — four coordinated tools:
     ingredient is unfamiliar or the scope is unclear, ask ONE brief
     clarifying question before emitting days (e.g. "just B/L/D, or
     snacks too?"). Default overwrite_existing = false.
+
+HOUSEHOLD PORTIONS (for nutrition + how-much-to-cook questions):
+  - Rakhi (adult woman): baseline 1× portion, ~1800-2100 kcal/day target.
+  - Pallav (adult man, her husband): ~1.2-1.3× of her portion, ~2200-2500
+    kcal/day target. He eats the same dishes.
+  - 2-year-old baby: ~0.3-0.4× of adult portion, mild spice, soft
+    texture, ~1000-1200 kcal/day target. Account for this when she asks
+    "how much rice / atta / dal should I cook for 3 people".
+  - Whole-day totals should quote all 3 columns when she asks about
+    nutrition so she sees the spread at a glance.
 
 Time / visit logging → use log_time tool (Pallav only)
   - "log 2 hours client meeting", "spent 30 min emails", "worked on
@@ -606,6 +623,50 @@ ${formatThoughts(recentThoughts)}
             'notes': {'type': 'string'},
           },
           'required': ['meal_type', 'dish_name'],
+        },
+      });
+
+      tools.add({
+        'name': 'get_meal_plan_range',
+        'description':
+            "Read Rakhi's ALREADY PLANNED meals for a date range. Call this "
+            "whenever she asks about existing plans, calories, nutrition, "
+            "portion sizes, or 'what am I cooking today/this week'. Returns "
+            "each day's slots with the resolved dish name + tags + prep "
+            "minutes so you can estimate kcal / protein / carbs / fat per "
+            "dish using standard Indian portion sizes. "
+            "NUTRITION MATH — when she asks about calories or macros: "
+            "(a) Use standard Indian home-cook portions: 1 katori = "
+            "~150g cooked / 1 roti = ~40g / 2 idli = ~100g / 1 paratha "
+            "plain = ~80g / 1 stuffed paratha = ~120g / 1 dosa = ~100g. "
+            "(b) Typical per-serving kcal ranges: breakfast 250-350, "
+            "simple dal+rice lunch ~380-450, paneer/chole/rajma ~250-320 "
+            "per katori, roti 80-90 each, biryani plate ~450-550, "
+            "stuffed paratha ~280-320 each, khichdi 250 per katori. "
+            "(c) Scale per person: baseline Rakhi (adult woman) ~1x; "
+            "Pallav (adult man) ~1.2-1.3x same dish; their 2-year-old "
+            "~0.3-0.4x with mild-spice soft-texture adaptation. "
+            "(d) Daily target ranges to show alongside totals: Rakhi "
+            "1800-2100 kcal, Pallav 2200-2500 kcal, toddler 1000-1200 "
+            "kcal. Flag if the day is noticeably above / below. "
+            "Be clear these are APPROX (±10-15%) because actual portions "
+            "and oil quantity vary.",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'from_date': {
+              'type': 'string',
+              'description':
+                  'YYYY-MM-DD start (inclusive). Defaults to today if '
+                  'omitted.',
+            },
+            'to_date': {
+              'type': 'string',
+              'description':
+                  'YYYY-MM-DD end (inclusive). Defaults to from_date if '
+                  'omitted (single day).',
+            },
+          },
         },
       });
 

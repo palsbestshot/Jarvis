@@ -1,8 +1,8 @@
 # scripts/deploy-web.ps1 -- build + deploy Rakhi's Jarvis PWA.
 #
-# Pallav's Android APK is not touched by this script (see deploy-apk.ps1
+# Pallav's Android APK is NOT touched by this script (see deploy-apk.ps1
 # for that). This script is for the Flutter Web PWA at
-# https://jarvis-78573.web.app — Rakhi's "Add to Home Screen" target.
+# https://jarvis-78573.web.app -- Rakhi's "Add to Home Screen" target.
 #
 # Why the env swap: env.json lives in pubspec.yaml's `assets:` list so
 # it ships with the Android APK. Flutter Web bundles every asset into
@@ -13,10 +13,10 @@
 # INGEST_SECRET injected from env.web.json.
 #
 # Flow:
-#   1. Back up real env.json to env.json.real
+#   1. Back up real env.json to env.json.real.bak
 #   2. Write a stripped {} env.json so nothing bundles into the JS
 #   3. flutter build web --dart-define-from-file=env.web.json
-#   4. Restore env.json from backup (always — even on failure)
+#   4. Restore env.json from backup (always -- even on failure)
 #   5. firebase deploy --only hosting,functions
 #
 # Usage:
@@ -45,7 +45,9 @@ if ($FunctionsOnly) {
     Write-Step 'Deploying Cloud Functions only'
     Push-Location $RepoRoot
     try {
-        & firebase deploy --only functions --project $ProjectId
+        # PowerShell splits unquoted comma-separated args; --only expects a
+        # single string so quote it even for the single-target case.
+        & firebase deploy --only "functions" --project $ProjectId
         if ($LASTEXITCODE -ne 0) { throw "firebase deploy failed (exit $LASTEXITCODE)" }
     } finally { Pop-Location }
     Write-Host ''
@@ -55,21 +57,21 @@ if ($FunctionsOnly) {
 
 # -- Pre-flight checks -------------------------------------------------------
 if (-not (Test-Path $EnvRealPath)) {
-    throw "env.json not found at $EnvRealPath. Can't proceed — aborting before any changes."
+    throw "env.json not found at $EnvRealPath. Aborting before any changes."
 }
 if (-not (Test-Path $EnvWebPath)) {
-    throw "env.web.json not found at $EnvWebPath. This file carries the web INGEST_SECRET + VAPID_PUBLIC_KEY — create it first (see the plan / CLAUDE.md)."
+    throw "env.web.json not found at $EnvWebPath. This file carries the web INGEST_SECRET and VAPID_PUBLIC_KEY -- create it first (see the plan / CLAUDE.md)."
 }
 
-# -- 1. Swap env.json → {} so nothing leaks into the bundle -----------------
-Write-Step 'Backing up env.json → env.json.real.bak and writing stripped placeholder'
+# -- 1. Swap env.json to {} so nothing leaks into the bundle ----------------
+Write-Step 'Backing up env.json to env.json.real.bak and writing stripped placeholder'
 Copy-Item -Path $EnvRealPath -Destination $EnvBackupPath -Force
 Set-Content -Path $EnvRealPath -Value '{}' -Encoding utf8 -NoNewline
 
 $buildFailed = $false
 try {
     # -- 2. Flutter build web -----------------------------------------------
-    Write-Step 'flutter build web --pwa-strategy=offline-first --release --dart-define-from-file=env.web.json'
+    Write-Step 'flutter build web --release --pwa-strategy=offline-first --dart-define-from-file=env.web.json'
     Push-Location $RepoRoot
     try {
         & flutter build web `
@@ -83,7 +85,7 @@ try {
     } finally { Pop-Location }
 
     if (-not (Test-Path (Join-Path $WebBuildDir 'index.html'))) {
-        throw "build/web/index.html missing — flutter build didn't produce output."
+        throw "build/web/index.html missing -- flutter build did not produce output."
     }
 } finally {
     # -- 3. Restore env.json NO MATTER WHAT ---------------------------------
@@ -96,24 +98,27 @@ try {
 }
 
 if ($buildFailed) {
-    Write-Host 'Web build failed — env.json restored, aborting before deploy.' -ForegroundColor Red
+    Write-Host 'Web build failed -- env.json restored, aborting before deploy.' -ForegroundColor Red
     exit 1
 }
 
 if ($BuildOnly) {
     Write-Host ''
-    Write-Host "Build finished at $WebBuildDir — not deploying (-BuildOnly)." -ForegroundColor Green
+    Write-Host "Build finished at $WebBuildDir -- not deploying (-BuildOnly)." -ForegroundColor Green
     exit 0
 }
 
 # -- 4. Firebase deploy ------------------------------------------------------
-Write-Step 'firebase deploy --only hosting,functions'
+# Quote the --only target list. PowerShell splits `hosting,functions` on the
+# comma otherwise, and firebase reads them as two separate flag values which
+# produces "No targets in firebase.json match".
+Write-Step 'firebase deploy --only "hosting,functions"'
 Push-Location $RepoRoot
 try {
-    & firebase deploy --only hosting,functions --project $ProjectId
+    & firebase deploy --only "hosting,functions" --project $ProjectId
     if ($LASTEXITCODE -ne 0) { throw "firebase deploy failed (exit $LASTEXITCODE)" }
 } finally { Pop-Location }
 
 Write-Host ''
 Write-Host "Done. PWA live at https://$ProjectId.web.app" -ForegroundColor Green
-Write-Host "Rakhi opens that URL in Safari → Share → 'Add to Home Screen'."
+Write-Host "Rakhi opens that URL in Safari, taps Share, then 'Add to Home Screen'."

@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../models/dish.dart';
 import '../../models/user_profile.dart';
+import '../../services/claude_service.dart';
 import '../../services/firestore_service.dart';
 
 class CustomDishForm extends StatefulWidget {
@@ -28,6 +29,7 @@ class CustomDishForm extends StatefulWidget {
 
 class _CustomDishFormState extends State<CustomDishForm> {
   final _firestore = FirestoreService();
+  final _claude = ClaudeService();
   final _nameCtrl = TextEditingController();
   final _hindiCtrl = TextEditingController();
   final _prepCtrl = TextEditingController(text: '20');
@@ -36,6 +38,7 @@ class _CustomDishFormState extends State<CustomDishForm> {
   final _notesCtrl = TextEditingController();
   late final Set<MealSlotId> _slots;
   bool _saving = false;
+  bool _enriching = false;
 
   @override
   void initState() {
@@ -107,6 +110,89 @@ class _CustomDishFormState extends State<CustomDishForm> {
         .toList();
   }
 
+  /// Ask Claude to fill in ingredients / prep time / tags / meal slots /
+  /// Hindi name / notes from the dish name. Rakhi just types "malai
+  /// kofta" and taps this — the rest is inferred. She reviews + edits
+  /// before saving, so the AI is a helper not a gatekeeper.
+  Future<void> _autofill() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Type a dish name first')),
+      );
+      return;
+    }
+    setState(() => _enriching = true);
+    try {
+      final enriched = await _claude.enrichDishDetails(name);
+      if (!mounted) return;
+      if (enriched.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't auto-fill — check your connection and try again, "
+              "or just fill in the fields manually.",
+            ),
+          ),
+        );
+        return;
+      }
+      setState(() {
+        // Merge into existing fields, not replace — if Rakhi already
+        // typed ingredients, append Claude's suggestions instead of
+        // stomping on her input.
+        final hindi = (enriched['name_hindi'] ?? '').toString();
+        if (hindi.isNotEmpty && _hindiCtrl.text.trim().isEmpty) {
+          _hindiCtrl.text = hindi;
+        }
+        final prep = enriched['prep_minutes'];
+        if (prep is int && _prepCtrl.text.trim() == '20') {
+          _prepCtrl.text = '$prep';
+        }
+        final tags = ((enriched['tags'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        if (tags.isNotEmpty && _tagsCtrl.text.trim().isEmpty) {
+          _tagsCtrl.text = tags.join(', ');
+        }
+        final ingredients = ((enriched['ingredients'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        if (ingredients.isNotEmpty && _ingredientsCtrl.text.trim().isEmpty) {
+          _ingredientsCtrl.text = ingredients.join('\n');
+        }
+        final notes = (enriched['notes'] ?? '').toString();
+        if (notes.isNotEmpty && _notesCtrl.text.trim().isEmpty) {
+          _notesCtrl.text = notes;
+        }
+        final mealTypes = ((enriched['meal_types'] as List?) ?? const [])
+            .map((e) => MealSlotId.fromValue(e.toString()))
+            .whereType<MealSlotId>()
+            .toSet();
+        if (mealTypes.isNotEmpty) {
+          _slots
+            ..clear()
+            ..addAll(mealTypes);
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Filled in with AI — review and edit as you like.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Auto-fill failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _enriching = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -130,6 +216,43 @@ class _CustomDishFormState extends State<CustomDishForm> {
         padding: const EdgeInsets.all(JarvisTheme.md),
         children: [
           _field(_nameCtrl, 'Name', hint: 'e.g. Matar Paneer'),
+          // Auto-fill affordance — Rakhi types just the name, Jarvis
+          // fills in ingredients / prep / tags / slots. She reviews
+          // before saving.
+          Padding(
+            padding: const EdgeInsets.only(bottom: JarvisTheme.sm),
+            child: OutlinedButton.icon(
+              onPressed: _enriching ? null : _autofill,
+              icon: _enriching
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          widget.user.accentColor,
+                        ),
+                      ),
+                    )
+                  : Icon(Icons.auto_awesome, color: widget.user.accentColor),
+              label: Text(
+                _enriching
+                    ? 'Asking Jarvis…'
+                    : 'Auto-fill with AI (ingredients, prep time, tags)',
+                style: TextStyle(color: widget.user.accentColor),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(
+                  color: widget.user.accentColor.withOpacity(0.5),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(JarvisTheme.small),
+                ),
+              ),
+            ),
+          ),
           _field(_hindiCtrl, 'Hindi name (optional)',
               hint: 'e.g. मटर पनीर'),
           const SizedBox(height: JarvisTheme.md),

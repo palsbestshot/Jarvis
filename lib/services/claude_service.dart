@@ -1184,4 +1184,135 @@ ${formatThoughts(recentThoughts)}
       throw Exception('Failed to call Claude API: $e');
     }
   }
+
+  /// Enrich a custom dish by name — Rakhi types just "malai kofta" and
+  /// Claude fills in ingredients / prep time / meal types / tags from its
+  /// general cooking knowledge. Returns a map with the same shape as a
+  /// Dish row (minus id/times_used/is_custom), suitable for feeding to
+  /// FirestoreService.createDish or pre-populating CustomDishForm fields.
+  ///
+  /// Never throws. On any failure (network, parse, missing key) returns
+  /// an empty map so the caller can fall back to its own defaults.
+  ///
+  /// Uses a one-shot Claude call with a strict JSON-only system prompt.
+  /// No tools, no context — this is a lookup, not a conversation. On
+  /// web it hits our aiChat proxy; on Android it calls Anthropic directly
+  /// with the bundled key (same as other ClaudeService methods).
+  Future<Map<String, dynamic>> enrichDishDetails(
+    String dishName, {
+    String? hint,
+  }) async {
+    if (!_hasCredentials) return <String, dynamic>{};
+    final name = dishName.trim();
+    if (name.isEmpty) return <String, dynamic>{};
+
+    // Strict JSON system prompt. Every key is required in the output so
+    // we can trust the downstream consumers not to null-check everywhere.
+    final system =
+        "You are an expert on Indian vegetarian home cooking. Given a "
+        "dish name, respond with ONLY a valid JSON object (no prose, no "
+        "markdown fences). The JSON has these fields:\n"
+        '  "ingredients": array of strings in the format "hinglish (english)" '
+        'e.g. "pyaaz (onion)", "tamatar (tomato)", "tur dal (pigeon pea dal)". '
+        'If the Hinglish and English names are the same (paneer, rice, tea), '
+        'write just the bare word. Keep 4-10 ingredients — the staples only, '
+        'not a full shopping list.\n'
+        '  "prep_minutes": integer, honest time-on-feet estimate (not '
+        'including overnight soaks).\n'
+        '  "meal_types": array from ["breakfast","brunch","lunch","eve_snacks",'
+        '"dinner"]. Pick 1-3 slots where this dish naturally fits.\n'
+        '  "tags": array of short tags. Always include "veg" for a vegetarian '
+        'dish. Include the region where applicable ("punjabi", "south", '
+        '"mp", "indori", "bhopali", "gujarati", "maharashtrian", "bengali", '
+        '"rajasthani", "awadhi", "hyderabadi", "kashmiri", "indo-chinese", '
+        '"italian"). Include style tags like "quick", "filling", "light", '
+        '"rich", "healthy", "spicy", "fried", "grilled", "comfort", '
+        '"festive", "winter", "summer" when apt. Keep to 3-6 tags.\n'
+        '  "name_hindi": Devanagari name if commonly known (e.g. "मटर पनीर"), '
+        'else empty string.\n'
+        '  "notes": one short sentence with a serving tip or eating context. '
+        'Empty string if nothing useful.\n'
+        'Never use line breaks inside strings. Never include trailing commas. '
+        'If the dish name is unrecognised, make the best educated guess '
+        'rather than erroring.';
+
+    final userMessage = hint != null && hint.trim().isNotEmpty
+        ? 'Dish name: "$name". Hint: ${hint.trim()}'
+        : 'Dish name: "$name".';
+
+    final requestBody = {
+      'model': _model,
+      'max_tokens': 512,
+      'system': system,
+      'messages': [
+        {'role': 'user', 'content': userMessage},
+      ],
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse(_chatEndpoint),
+        headers: _chatHeaders,
+        body: jsonEncode(requestBody),
+      );
+      if (response.statusCode != 200) return <String, dynamic>{};
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final content = (data['content'] as List?) ?? const [];
+      if (content.isEmpty) return <String, dynamic>{};
+      final first = content[0] as Map<String, dynamic>;
+      final text = (first['text'] ?? '').toString().trim();
+      if (text.isEmpty) return <String, dynamic>{};
+
+      // Claude sometimes wraps with ```json fences despite instructions —
+      // strip them before parsing.
+      var cleaned = text;
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned
+            .replaceFirst(RegExp(r'^```(json)?\s*'), '')
+            .replaceFirst(RegExp(r'\s*```$'), '');
+      }
+
+      final parsed = jsonDecode(cleaned);
+      if (parsed is! Map<String, dynamic>) return <String, dynamic>{};
+
+      // Normalise shapes + defensively coerce types so downstream writers
+      // don't have to re-check.
+      final ingredients = ((parsed['ingredients'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+      final mealTypes = ((parsed['meal_types'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((s) => const {
+                'breakfast',
+                'brunch',
+                'lunch',
+                'eve_snacks',
+                'dinner',
+              }.contains(s))
+          .toList();
+      final tags = ((parsed['tags'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+      final prepMinutes = (parsed['prep_minutes'] is num)
+          ? (parsed['prep_minutes'] as num).toInt()
+          : 20;
+      final notes = (parsed['notes'] ?? '').toString().trim();
+      final nameHindi = (parsed['name_hindi'] ?? '').toString().trim();
+
+      return {
+        'ingredients': ingredients,
+        'meal_types': mealTypes.isEmpty ? ['lunch'] : mealTypes,
+        'tags': tags.contains('veg') ? tags : ['veg', ...tags],
+        'prep_minutes': prepMinutes.clamp(5, 180),
+        if (notes.isNotEmpty) 'notes': notes,
+        if (nameHindi.isNotEmpty) 'name_hindi': nameHindi,
+      };
+    } catch (_) {
+      // Network / parse failure — return empty so the caller falls back.
+      return <String, dynamic>{};
+    }
+  }
 }

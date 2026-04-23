@@ -2,15 +2,21 @@
 // email task sheet can one-tap-dial the delegate or boss. Future settings
 // (theme, notifications, etc.) can slot in as additional sections below.
 
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart' as fc;
+import 'package:http/http.dart' as http;
 
 import '../../core/constants.dart';
 import '../../core/people_directory.dart';
 import '../../core/theme.dart';
 import '../../models/user_profile.dart';
 import '../../services/firestore_service.dart';
+import '../../services/notification_service.dart';
 import '../../widgets/call_followup_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -24,6 +30,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final FirestoreService _svc = FirestoreService();
+  bool _sendingTestPush = false;
+  bool _registeringToken = false;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // People -> Phone section is Pallav-only (Bosses + Subordinates are
     // his HVAC org chart, baked into PeopleDirectory). Rakhi has no use
     // for it and shouldn't see Pallav's team, so short-circuit her to
-    // a simple placeholder.
+    // a simple placeholder + notification test controls.
     if (widget.user.id != AppConstants.pallavUserId) {
       return ListView(
         padding: const EdgeInsets.fromLTRB(
@@ -72,11 +80,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
             style: JarvisTheme.bodySmall
                 .copyWith(color: JarvisTheme.textMuted),
           ),
-          const SizedBox(height: JarvisTheme.lg),
+          const SizedBox(height: JarvisTheme.xl),
           Text(
-            'More settings coming soon.',
-            style: JarvisTheme.bodyMedium
+            'Notifications',
+            style: JarvisTheme.headingMedium
+                .copyWith(color: widget.user.accentColor),
+          ),
+          const SizedBox(height: JarvisTheme.sm),
+          Text(
+            "Tap 'Send test notification' to verify pushes land on your "
+            "home screen. If nothing arrives, tap 'Re-register device' "
+            "to re-grant permission and refresh the FCM token.",
+            style: JarvisTheme.bodySmall
                 .copyWith(color: JarvisTheme.textSecondary),
+          ),
+          const SizedBox(height: JarvisTheme.md),
+          ElevatedButton.icon(
+            onPressed: _sendingTestPush ? null : _sendTestPush,
+            icon: _sendingTestPush
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Colors.white,
+                      ),
+                    ),
+                  )
+                : const Icon(Icons.notifications_active, size: 20),
+            label: Text(
+              _sendingTestPush ? 'Sending…' : 'Send test notification',
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: widget.user.accentColor,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(JarvisTheme.small),
+              ),
+            ),
+          ),
+          const SizedBox(height: JarvisTheme.sm),
+          OutlinedButton.icon(
+            onPressed: _registeringToken ? null : _reRegisterDevice,
+            icon: _registeringToken
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        widget.user.accentColor,
+                      ),
+                    ),
+                  )
+                : Icon(Icons.refresh,
+                    size: 20, color: widget.user.accentColor),
+            label: Text(
+              _registeringToken
+                  ? 'Re-registering…'
+                  : 'Re-register this device for push',
+              style: TextStyle(color: widget.user.accentColor),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(
+                color: widget.user.accentColor.withOpacity(0.5),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(JarvisTheme.small),
+              ),
+            ),
+          ),
+          const SizedBox(height: JarvisTheme.sm),
+          Text(
+            kIsWeb
+                ? 'Web: notification must be added to home screen (PWA) for pushes to appear on iOS.'
+                : 'Android: pushes land in the system tray even when the app is closed.',
+            style: JarvisTheme.bodySmall
+                .copyWith(color: JarvisTheme.textMuted),
           ),
         ],
       );
@@ -448,4 +531,129 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// POST to the sendTestPush Cloud Function. The function reads
+  /// users/{userId}/device_tokens/{primary,web} and dispatches to
+  /// whichever exist. Response body tells us which channels actually
+  /// received the push; the snackbar summarises that.
+  ///
+  /// On Android this ALSO triggers flutter_local_notifications as a
+  /// belt-and-braces — so Pallav sees a notification even if FCM is
+  /// flaky on his device.
+  Future<void> _sendTestPush() async {
+    setState(() => _sendingTestPush = true);
+    try {
+      // Android parallel path: show a local notification immediately so
+      // Pallav sees something even if the cloud hop is slow.
+      if (!kIsWeb) {
+        try {
+          await NotificationService().showTestNotification();
+        } catch (_) {/* non-fatal */}
+      }
+
+      final resp = await http.post(
+        Uri.parse(AppConstants.testPushUrl),
+        headers: {
+          'content-type': 'application/json',
+          'x-ingest-secret': AppConstants.ingestSecret,
+        },
+        body: jsonEncode({'userId': widget.user.id}),
+      );
+      if (!mounted) return;
+
+      String label;
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        final sent = json['sent_to'] as Map<String, dynamic>?;
+        final hasWeb = sent?['web'] == true;
+        final hasPrimary = sent?['primary'] == true;
+        if (hasWeb && hasPrimary) {
+          label = 'Test push sent to web + Android.';
+        } else if (hasWeb) {
+          label = 'Test push sent to web. Check the home screen / lock screen.';
+        } else if (hasPrimary) {
+          label = 'Test push sent to Android.';
+        } else {
+          label =
+              'No device tokens registered yet. Tap "Re-register device" below '
+              'to grant notification permission and save the token.';
+        }
+      } else {
+        label = 'Test push failed: HTTP ${resp.statusCode} — ${resp.body}';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(label),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Test push error: $e'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sendingTestPush = false);
+    }
+  }
+
+  /// Re-run the notification onboarding for this device. Asks the OS
+  /// for notification permission (idempotent — if already granted the
+  /// prompt doesn't re-appear), reads the FCM token (web build passes
+  /// the VAPID key) and re-saves it under device_tokens/{web|primary}.
+  /// Useful after clearing Safari data, reinstalling the PWA, or
+  /// switching devices.
+  Future<void> _reRegisterDevice() async {
+    setState(() => _registeringToken = true);
+    try {
+      // Permission grant (iOS Safari shows the native prompt only if
+      // not-yet-determined; once denied, the user has to go to Safari
+      // settings themselves. We surface that case via the FCM status).
+      final settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      if (settings.authorizationStatus != AuthorizationStatus.authorized &&
+          settings.authorizationStatus != AuthorizationStatus.provisional) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              kIsWeb
+                  ? 'Notifications blocked in Safari. Open iPhone Settings → Safari → Advanced → Website Data → allow notifications for jarvis-78573.web.app.'
+                  : 'Notifications blocked — enable in Android app settings.',
+            ),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+        return;
+      }
+
+      // NotificationService.initialize handles token fetch + Firestore
+      // save under device_tokens/{web|primary} + onTokenRefresh listener.
+      await NotificationService().initialize(widget.user.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Device re-registered. Now tap "Send test notification" above.',
+          ),
+          duration: Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Re-register error: $e'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _registeringToken = false);
+    }
+  }
 }

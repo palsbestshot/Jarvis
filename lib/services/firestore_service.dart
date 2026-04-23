@@ -827,6 +827,11 @@ class FirestoreService {
 
   /// Seed the dish catalog from `IndianDishSeed` if the collection is
   /// currently empty. Idempotent — safe to call on every app open.
+  ///
+  /// Retained for backwards-compatibility; new code should call
+  /// [migrateDishCatalog] which handles both the first-time seed AND
+  /// incremental updates (adding new seeds / pruning deprecated ones
+  /// across seed-version bumps).
   Future<int> seedDishCatalog(
     String userId, {
     required List<Map<String, dynamic>> seedDishes,
@@ -856,6 +861,109 @@ class FirestoreService {
     }
     await batch.commit();
     return written;
+  }
+
+  /// Migrate the dish catalog from its current seed_version to [toVersion].
+  ///
+  /// Behaviour:
+  ///   1. Reads users/{uid}/meta/catalog.seed_version. Missing → treat as 0
+  ///      (first run). If already at/above [toVersion], no-op and return.
+  ///   2. Upserts every dish in [seedDishes]:
+  ///      - missing doc → create with created_at + times_used=0
+  ///      - existing doc → MERGE the seed fields (name, meal_types,
+  ///        ingredients, tags, prep_minutes, notes, is_custom=false). Merge
+  ///        preserves times_used + created_at so Rakhi's usage history
+  ///        survives the upgrade.
+  ///   3. For each id in [legacyIdsToPrune]: if the doc exists AND
+  ///      is_custom=false AND times_used=0 → delete. Otherwise leave it
+  ///      (she actually used it; pruning it would orphan meal_plan refs).
+  ///   4. Writes seed_version = [toVersion] on the meta doc.
+  ///
+  /// Idempotent — safe to call on every launch. Returns a small summary
+  /// the caller can log / snackbar.
+  Future<Map<String, int>> migrateDishCatalog({
+    required String userId,
+    required int toVersion,
+    required List<Map<String, dynamic>> seedDishes,
+    required List<String> legacyIdsToPrune,
+  }) async {
+    final metaRef = _userDoc(userId).collection('meta').doc('catalog');
+    final metaSnap = await metaRef.get();
+    final currentVersion =
+        ((metaSnap.data() ?? {})['seed_version'] as num?)?.toInt() ?? 0;
+    if (currentVersion >= toVersion) {
+      return {'added': 0, 'updated': 0, 'pruned': 0, 'skipped': 1};
+    }
+
+    // Snapshot the existing catalog once so we can decide per-id whether
+    // to insert / merge / prune without a per-doc read.
+    final catalogSnap = await _dishCatalogRef(userId).get();
+    final existing = <String, Map<String, dynamic>>{
+      for (final d in catalogSnap.docs) d.id: d.data(),
+    };
+
+    int added = 0, updated = 0, pruned = 0;
+    WriteBatch batch = _firestore.batch();
+    int opsInBatch = 0;
+
+    // Helper — flush the batch mid-walk if we get near the 500-op Firestore
+    // cap. Dart closures capture `batch` by reference, so reassigning it
+    // here is visible to the outer scope.
+    Future<void> flushIfFull() async {
+      if (opsInBatch >= 450) {
+        await batch.commit();
+        batch = _firestore.batch();
+        opsInBatch = 0;
+      }
+    }
+
+    // 1 + 2. Upsert all seed dishes.
+    for (final dish in seedDishes) {
+      final dishId = (dish['id'] ?? '').toString();
+      if (dishId.isEmpty) continue;
+      final ref = _dishCatalogRef(userId).doc(dishId);
+      final body = Map<String, dynamic>.from(dish)..remove('id');
+      if (existing.containsKey(dishId)) {
+        // Merge — preserves times_used + created_at, refreshes name /
+        // ingredients / tags / meal_types / prep_minutes / notes.
+        batch.set(ref, body, SetOptions(merge: true));
+        updated++;
+      } else {
+        batch.set(ref, {
+          ...body,
+          'created_at': FieldValue.serverTimestamp(),
+        });
+        added++;
+      }
+      opsInBatch++;
+      await flushIfFull();
+    }
+
+    // 3. Prune legacy ids only if unused (is_custom=false, times_used=0).
+    for (final legacyId in legacyIdsToPrune) {
+      final existingDoc = existing[legacyId];
+      if (existingDoc == null) continue;
+      final isCustom = existingDoc['is_custom'] == true;
+      final timesUsed = (existingDoc['times_used'] is num)
+          ? (existingDoc['times_used'] as num).toInt()
+          : 0;
+      if (!isCustom && timesUsed == 0) {
+        batch.delete(_dishCatalogRef(userId).doc(legacyId));
+        pruned++;
+        opsInBatch++;
+        await flushIfFull();
+      }
+    }
+
+    // 4. Bump the version marker.
+    batch.set(metaRef, {
+      'seed_version': toVersion,
+      'migrated_at': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    opsInBatch++;
+
+    await batch.commit();
+    return {'added': added, 'updated': updated, 'pruned': pruned, 'skipped': 0};
   }
 
   /// Stream the dish catalog, most-used first. Search/filter happens

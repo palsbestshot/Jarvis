@@ -660,6 +660,74 @@ class ChatNotifier extends Notifier<ChatState> {
     return null;
   }
 
+  /// Auto-create a custom dish in the catalog with AI-enriched fields.
+  ///
+  /// Used by the three tool handlers (save_meal, plan_day_meals,
+  /// plan_week_meals) whenever Claude mentions a dish Rakhi hasn't used
+  /// before. Flow:
+  ///   1. If [knownIngredients] is non-empty (the tool already supplied
+  ///      them — e.g. plan_week_meals pulls `uses_ingredients` from the
+  ///      tool input), we trust those and skip the enrichment call.
+  ///   2. Otherwise fire a one-shot ClaudeService.enrichDishDetails call
+  ///      to fill in ingredients / prep / tags / hindi name / notes.
+  ///      ~500-800ms extra on first-time dishes only; after that the
+  ///      catalog hit skips this path.
+  ///   3. Fallback to empty ingredients + the caller's provided slot /
+  ///      default prep if enrichment failed.
+  ///
+  /// Returns the new dish id.
+  Future<String> _autoCreateDishWithEnrichment(
+    String userId,
+    String dishName,
+    String fallbackSlot, {
+    List<String> knownIngredients = const [],
+    int fallbackPrepMinutes = 25,
+    List<String> fallbackTags = const ['custom'],
+  }) async {
+    // If caller supplied ingredients, trust them and skip the AI hop.
+    if (knownIngredients.isNotEmpty) {
+      return _firestoreService.createDish(userId, {
+        'name': dishName,
+        'meal_types': [fallbackSlot],
+        'prep_minutes': fallbackPrepMinutes,
+        'tags': fallbackTags,
+        'ingredients': knownIngredients,
+      });
+    }
+
+    Map<String, dynamic> enriched = const {};
+    try {
+      enriched = await _claudeService.enrichDishDetails(dishName);
+    } catch (_) {/* ignore, fall back below */}
+
+    final ingredients = ((enriched['ingredients'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList();
+    final mealTypes = ((enriched['meal_types'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList();
+    final tags = ((enriched['tags'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList();
+    final prepMinutes = enriched['prep_minutes'] is int
+        ? enriched['prep_minutes'] as int
+        : fallbackPrepMinutes;
+
+    return _firestoreService.createDish(userId, {
+      'name': dishName,
+      'meal_types': mealTypes.isEmpty ? [fallbackSlot] : mealTypes,
+      'prep_minutes': prepMinutes,
+      'tags': tags.isEmpty ? fallbackTags : tags,
+      'ingredients': ingredients,
+      if (enriched['name_hindi'] != null &&
+          (enriched['name_hindi'] as String).isNotEmpty)
+        'name_hindi': enriched['name_hindi'],
+      if (enriched['notes'] != null &&
+          (enriched['notes'] as String).isNotEmpty)
+        'notes': enriched['notes'],
+    });
+  }
+
   /// Plan a single meal slot. If the dish isn't in the catalog, create
   /// it first (tagged 'custom') so future suggestions can surface it.
   Future<String> _handleSaveMeal(
@@ -674,17 +742,9 @@ class ChatNotifier extends Notifier<ChatState> {
     final dateRaw = (input['date'] ?? '').toString().trim();
     final dateKey = _resolveDateKey(dateRaw);
 
-    // Find existing dish or auto-create a custom one.
+    // Find existing dish or auto-create a custom one with AI enrichment.
     var dishId = await _findDishByName(userId, dishName);
-    if (dishId == null) {
-      dishId = await _firestoreService.createDish(userId, {
-        'name': dishName,
-        'meal_types': [mealType],
-        'prep_minutes': 20,
-        'tags': ['custom'],
-        'ingredients': <String>[],
-      });
-    }
+    dishId ??= await _autoCreateDishWithEnrichment(userId, dishName, mealType);
     final notes = (input['notes'] ?? '').toString().trim();
     await _firestoreService.setMealSlot(
       userId,
@@ -788,13 +848,7 @@ class ChatNotifier extends Notifier<ChatState> {
       final dishName = (entry['dish_name'] ?? '').toString().trim();
       if (slot.isEmpty || dishName.isEmpty) continue;
       var dishId = await _findDishByName(userId, dishName);
-      dishId ??= await _firestoreService.createDish(userId, {
-        'name': dishName,
-        'meal_types': [slot],
-        'prep_minutes': 20,
-        'tags': ['custom'],
-        'ingredients': <String>[],
-      });
+      dishId ??= await _autoCreateDishWithEnrichment(userId, dishName, slot);
       final notes = (entry['notes'] ?? '').toString().trim();
       await _firestoreService.setMealSlot(userId, dateKey, slot, {
         'dish_id': dishId,
@@ -980,8 +1034,10 @@ class ChatNotifier extends Notifier<ChatState> {
 
         var dishId = await _findDishByName(userId, dishName);
         if (dishId == null) {
-          // Pull through any ingredients Claude flagged so the catalog
-          // entry is useful next time she queries by ingredient.
+          // Pull through any ingredients Claude flagged in the tool call
+          // so the catalog entry is useful next time she searches by
+          // ingredient. If empty, _autoCreateDishWithEnrichment fires a
+          // secondary Claude call to fill in details.
           final rawUses = (slotEntry['uses_ingredients'] as List?)
                   ?.cast<dynamic>() ??
               const [];
@@ -989,13 +1045,13 @@ class ChatNotifier extends Notifier<ChatState> {
               .map((e) => e.toString().trim())
               .where((s) => s.isNotEmpty)
               .toList();
-          dishId = await _firestoreService.createDish(userId, {
-            'name': dishName,
-            'meal_types': [slot],
-            'prep_minutes': 25,
-            'tags': ['custom', 'weekly-plan'],
-            'ingredients': ingredients,
-          });
+          dishId = await _autoCreateDishWithEnrichment(
+            userId,
+            dishName,
+            slot,
+            knownIngredients: ingredients,
+            fallbackTags: const ['custom', 'weekly-plan'],
+          );
           dishesCreated++;
         }
         final notes = (slotEntry['notes'] ?? '').toString().trim();

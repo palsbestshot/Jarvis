@@ -7,6 +7,7 @@ import '../widgets/jarvis_logo.dart';
 import '../providers/auth_provider.dart';
 import 'login_screen.dart';
 import 'home_screen.dart';
+import 'web_permissions_onboarding.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -57,6 +58,22 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     if (!mounted) return;
 
     if (userId != null) {
+      // On web, Rakhi's very first launch should be routed through the
+      // permissions onboarding screen so she grants notifications + mic
+      // + camera up front (iOS Safari only honors each prompt in
+      // response to a user gesture, so deferring these to first-use
+      // makes the UX feel broken). shouldShow returns false on Android
+      // always, and on web after the SharedPreferences flag is set.
+      final needsOnboard = await WebPermissionsOnboarding.shouldShow();
+      if (!mounted) return;
+      if (needsOnboard) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const WebPermissionsOnboarding(),
+          ),
+        );
+        return;
+      }
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
       );

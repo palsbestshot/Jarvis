@@ -50,7 +50,16 @@ class _MealsSectionState extends State<MealsSection> {
         m['id'] = d.id; // let FirestoreService use it as the doc id
         return m;
       }).toList();
-      await _firestore.seedDishCatalog(widget.user.id, seedDishes: seeds);
+      // migrateDishCatalog handles both first-time seed (inserts all)
+      // and incremental upgrades (adds new seeds, prunes legacy non-veg
+      // ids from v1 if unused, merges refreshed fields on existing seed
+      // docs). Idempotent — safe on every open.
+      await _firestore.migrateDishCatalog(
+        userId: widget.user.id,
+        toVersion: IndianDishSeed.seedVersion,
+        seedDishes: seeds,
+        legacyIdsToPrune: IndianDishSeed.legacyNonVegIds,
+      );
     } catch (_) {/* non-fatal — Rakhi can still add dishes manually */}
   }
 

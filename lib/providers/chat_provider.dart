@@ -479,8 +479,8 @@ class ChatNotifier extends Notifier<ChatState> {
       case 'plan_day_meals':
         return await _handlePlanDayMeals(userId, toolInput);
 
-      case 'plan_month_meals':
-        return await _handlePlanMonthMeals(userId, toolInput);
+      case 'plan_week_meals':
+        return await _handlePlanWeekMeals(userId, toolInput);
 
       case 'save_goal':
         final goalId = await _firestoreService.saveGoal(userId, toolInput);
@@ -805,88 +805,60 @@ class ChatNotifier extends Notifier<ChatState> {
     return '✓ Day planned $dateKey — ${savedParts.join(" · ")}';
   }
 
-  /// Expand Claude's weekly template across every day of a target
-  /// month, writing meal_plans/{yyyy-mm-dd} for each matching weekday.
-  /// Safe to call on a month that already has some days planned —
-  /// skips those unless the caller asks to overwrite.
-  Future<String> _handlePlanMonthMeals(
+  /// Apply Claude's ingredient-driven 7-day plan to Firestore. Each
+  /// entry in `days` has an explicit date and a list of slots to fill,
+  /// so we just iterate and write. Skips days that already have any
+  /// slot planned unless `overwrite_existing` is true. Fuzzy-matches
+  /// dish names against Rakhi's catalog and auto-creates a custom
+  /// dish entry for anything new Claude invented to use her produce.
+  Future<String> _handlePlanWeekMeals(
     String userId,
     Map<String, dynamic> input,
   ) async {
-    final monthRaw = (input['month'] ?? '').toString().trim();
-    final templateRaw = (input['week_template'] as List?)?.cast<dynamic>() ?? [];
+    final days = (input['days'] as List?)?.cast<dynamic>() ?? [];
     final overwrite = input['overwrite_existing'] == true;
     final summary = (input['summary'] ?? '').toString().trim();
-    if (monthRaw.isEmpty || templateRaw.isEmpty) {
-      return '✗ Month or weekly template missing.';
+    final weekStart = (input['week_start'] ?? '').toString().trim();
+    if (days.isEmpty) {
+      return '✗ No days in the week plan.';
     }
 
-    // Parse "YYYY-MM" (tolerate "YYYY-M" or "YYYY-MM-DD" — we only care
-    // about year + month).
-    final monthParts = monthRaw.split('-');
-    if (monthParts.length < 2) {
-      return '✗ Month must be in YYYY-MM format.';
+    // Pre-load existing plans for the date range so the skip-check
+    // doesn't round-trip once per day.
+    final dateKeys = <String>[];
+    for (final d in days) {
+      if (d is Map<String, dynamic>) {
+        final dk = (d['date'] ?? '').toString().trim();
+        if (dk.isNotEmpty) dateKeys.add(dk);
+      }
     }
-    final year = int.tryParse(monthParts[0]);
-    final month = int.tryParse(monthParts[1]);
-    if (year == null || month == null || month < 1 || month > 12) {
-      return '✗ Could not parse month "$monthRaw".';
+    final existingSnaps = <String, Map<String, dynamic>>{};
+    if (dateKeys.isNotEmpty) {
+      try {
+        final sorted = [...dateKeys]..sort();
+        final existing = await _firestoreService.getMealPlanRange(
+          userId,
+          sorted.first,
+          sorted.last,
+        );
+        for (final plan in existing) {
+          existingSnaps[(plan['date_key'] ?? plan['id'] ?? '').toString()] =
+              plan;
+        }
+      } catch (_) {/* non-fatal */}
     }
 
-    // Build a weekday → [slots] map from Claude's template. DateTime's
-    // weekday is 1=Mon..7=Sun; map the string labels to those ints.
-    const weekdayMap = {
-      'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4,
-      'Fri': 5, 'Sat': 6, 'Sun': 7,
-    };
-    final template = <int, List<Map<String, dynamic>>>{};
-    for (final entry in templateRaw) {
-      if (entry is! Map<String, dynamic>) continue;
-      final weekday = weekdayMap[(entry['weekday'] ?? '').toString()];
-      final slots = (entry['slots'] as List?)?.cast<dynamic>() ?? [];
-      if (weekday == null) continue;
-      template[weekday] = slots
-          .whereType<Map<String, dynamic>>()
-          .where((s) =>
-              (s['slot'] ?? '').toString().isNotEmpty &&
-              (s['dish_name'] ?? '').toString().trim().isNotEmpty)
-          .toList();
-    }
-    if (template.isEmpty) return '✗ No valid weekday entries in template.';
-
-    // Iterate every day of the target month, applying the template.
-    // Skip days already planned unless overwrite_existing=true.
-    final lastDay = DateTime(year, month + 1, 0).day;
     int daysWritten = 0;
     int daysSkipped = 0;
     int dishesCreated = 0;
-    final existingSnaps = <String, Map<String, dynamic>>{};
-
-    // Pre-load existing plans for the month so we skip-check without
-    // 30 round-trips.
-    try {
-      String two(int n) => n.toString().padLeft(2, '0');
-      final fromKey = '$year-${two(month)}-01';
-      final toKey = '$year-${two(month)}-${two(lastDay)}';
-      final existing = await _firestoreService
-          .getMealPlanRange(userId, fromKey, toKey);
-      for (final plan in existing) {
-        existingSnaps[(plan['date_key'] ?? plan['id'] ?? '').toString()] = plan;
-      }
-    } catch (_) {/* non-fatal — fall back to per-day skip check */}
-
-    for (int day = 1; day <= lastDay; day++) {
-      final date = DateTime(year, month, day);
-      final weekday = date.weekday;
-      final slots = template[weekday];
-      if (slots == null || slots.isEmpty) continue;
-
-      String two(int n) => n.toString().padLeft(2, '0');
-      final dateKey = '${date.year}-${two(date.month)}-${two(date.day)}';
+    for (final entry in days) {
+      if (entry is! Map<String, dynamic>) continue;
+      final dateKey = (entry['date'] ?? '').toString().trim();
+      final slots = (entry['slots'] as List?)?.cast<dynamic>() ?? [];
+      if (dateKey.isEmpty || slots.isEmpty) continue;
 
       if (!overwrite) {
         final existing = existingSnaps[dateKey];
-        // "Already planned" = any of the 5 slot keys exists in the doc.
         final hasAny = existing != null &&
             ['breakfast', 'brunch', 'lunch', 'eve_snacks', 'dinner']
                 .any((k) => existing[k] is Map);
@@ -896,18 +868,30 @@ class ChatNotifier extends Notifier<ChatState> {
         }
       }
 
+      var wroteAny = false;
       for (final slotEntry in slots) {
+        if (slotEntry is! Map<String, dynamic>) continue;
         final slot = (slotEntry['slot'] ?? '').toString();
         final dishName = (slotEntry['dish_name'] ?? '').toString().trim();
         if (slot.isEmpty || dishName.isEmpty) continue;
+
         var dishId = await _findDishByName(userId, dishName);
         if (dishId == null) {
+          // Pull through any ingredients Claude flagged so the catalog
+          // entry is useful next time she queries by ingredient.
+          final rawUses = (slotEntry['uses_ingredients'] as List?)
+                  ?.cast<dynamic>() ??
+              const [];
+          final ingredients = rawUses
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList();
           dishId = await _firestoreService.createDish(userId, {
             'name': dishName,
             'meal_types': [slot],
-            'prep_minutes': 20,
-            'tags': ['custom'],
-            'ingredients': <String>[],
+            'prep_minutes': 25,
+            'tags': ['custom', 'weekly-plan'],
+            'ingredients': ingredients,
           });
           dishesCreated++;
         }
@@ -917,14 +901,14 @@ class ChatNotifier extends Notifier<ChatState> {
           if (notes.isNotEmpty) 'notes': notes,
         });
         await _firestoreService.incrementDishTimesUsed(userId, dishId);
+        wroteAny = true;
       }
-      daysWritten++;
+      if (wroteAny) daysWritten++;
     }
 
-    final parts = <String>['✓ Planned $daysWritten days of $monthRaw'];
-    if (daysSkipped > 0) {
-      parts.add('skipped $daysSkipped already-planned');
-    }
+    final startLabel = weekStart.isNotEmpty ? weekStart : 'this week';
+    final parts = <String>['✓ Week plan saved ($startLabel) — $daysWritten days'];
+    if (daysSkipped > 0) parts.add('skipped $daysSkipped already-planned');
     if (dishesCreated > 0) parts.add('$dishesCreated new dishes added');
     if (summary.isNotEmpty) parts.add('— $summary');
     return parts.join(' · ');

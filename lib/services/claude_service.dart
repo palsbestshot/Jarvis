@@ -171,13 +171,14 @@ Meals / meal plans (Rakhi only) — four coordinated tools:
   - plan_day_meals: "Plan tomorrow", "Fill Monday's lunch and dinner" —
     propose a multi-slot plan, handler writes everything when Rakhi
     confirms. Slots enum: breakfast | brunch | lunch | eve_snacks | dinner.
-  - plan_month_meals: "Plan all of May", "fill the whole month", "monthly
-    meal plan". You emit a 7-day weekly template (Mon..Sun, each with
-    breakfast/lunch/dinner by default) and the handler replicates it
-    across every matching weekday in the month. Default to NOT
-    overwriting days she's already planned. Ask for any preferences she
-    hasn't stated (veg/non-veg mix, toddler-friendly always, etc.)
-    BEFORE emitting the template — one clarifying question is fine.
+  - plan_week_meals: "Plan the week", "I bought X, Y, Z — plan meals",
+    "weekly plan from Monday". Takes the ingredients she just bought +
+    standard pantry staples + optional constraints, emits 7 explicit
+    days (date + slots). Bias lunch + dinner toward consuming the bought
+    produce before it spoils; breakfasts can lean on pantry. If any
+    ingredient is unfamiliar or the scope is unclear, ask ONE brief
+    clarifying question before emitting days (e.g. "just B/L/D, or
+    snacks too?"). Default overwrite_existing = false.
 
 Time / visit logging → use log_time tool (Pallav only)
   - "log 2 hours client meeting", "spent 30 min emails", "worked on
@@ -782,64 +783,119 @@ ${formatThoughts(recentThoughts)}
       });
 
       tools.add({
-        'name': 'plan_month_meals',
+        'name': 'plan_week_meals',
         'description':
-            "Populate an entire month of meals in one shot. Use when "
-            "Rakhi says 'plan all of May', 'fill the whole month', "
-            "'monthly meal plan', 'plan next 30 days'. "
-            "You emit a WEEKLY template (one entry per weekday Mon..Sun) "
-            "and the handler replicates it across every matching weekday "
-            "in the target month. This keeps your response tight and "
-            "gives her a predictable weekly rhythm. "
+            "Plan the next 7 days of meals AROUND the ingredients Rakhi "
+            "actually has in her kitchen. Use when she says 'plan the "
+            "week', 'I bought brinjal, ladyfinger, potato — plan meals', "
+            "'weekly meal plan from Monday', 'use these vegetables this "
+            "week'. This is the go-to tool whenever she ties meal "
+            "planning to shopping / groceries. "
+            "HOW TO USE INGREDIENTS: "
+            "(1) `ingredients_bought` is what she just bought — she "
+            "wants these consumed across the week before they spoil. "
+            "Distribute them across 2-4 different dishes so she isn't "
+            "eating brinjal every day. "
+            "(2) `standard_pantry` is the always-available staples "
+            "(onion, tomato, potato, ginger-garlic, green chilli, "
+            "turmeric, cumin, mustard seeds, dal — tuvar/moong/chana, "
+            "rice, atta, curd, paneer stock, ghee, oil). Assume she "
+            "has these unless she tells you otherwise. Combine them "
+            "freely with the bought ingredients to construct dishes. "
+            "(3) If she lists an ingredient you don't recognise, ask "
+            "one clarifying question before planning. "
             "APPLY THESE DEFAULTS unless she says otherwise: "
-            "(1) Plan breakfast + lunch + dinner by default (skip brunch "
-            "and eve_snacks unless she asks). "
-            "(2) Indian home-style pan-Indian rotation — vary cuisine "
-            "across the week (one South Indian day, one Indo-Chinese, "
-            "one simple dal-chawal comfort day, etc.). "
-            "(3) Weekends can be slightly heavier / festive. Weekday "
-            "lunches should be 30-min cooks. "
-            "(4) Toddler-friendly for lunch/dinner/brunch slots — her "
-            "2-year-old eats the same meal. Prefer soft-texture / mild-"
-            "spice default versions. "
-            "(5) Don't repeat the same dish for breakfast on more than "
-            "2 weekdays; don't repeat dinner on consecutive days. "
-            "Return a concise `summary` line Rakhi can read ('Weekly "
-            "rhythm: Mon Poha / Dal Rice / Paneer Bhurji, Tue Upma / ...'). "
-            "Set `overwrite_existing` true only if she asks to replace "
-            "an existing plan — otherwise the handler skips days that "
-            "already have any slot planned.",
+            "(1) Plan breakfast + lunch + dinner by default (skip "
+            "brunch and eve_snacks unless she asks). "
+            "(2) Breakfast can lean on pantry staples (poha, upma, "
+            "paratha, idli/dosa if batter is implied) — doesn't need "
+            "to consume the bought produce. Lunch + dinner are the "
+            "main ingredient-consumer slots. "
+            "(3) Indian home-style, mix of cuisines across the week "
+            "(one South Indian day, one Indo-Chinese, one dal-chawal "
+            "comfort day, one paratha/roti heavy day, etc.). "
+            "(4) Toddler-friendly versions for lunch/dinner/brunch — "
+            "her 2-year-old eats the same meal. Add a `notes` line "
+            "for how to adapt (mild spice, mash a portion, skip chilli "
+            "for baby). "
+            "(5) Weekday cooks should be 30 min or less unless she "
+            "explicitly asks for a weekend cook. "
+            "(6) Don't repeat the same lunch or dinner in the same "
+            "week. Breakfast can repeat up to twice. "
+            "Return a short `summary` Rakhi can scan in one glance "
+            "('Week plan: brinjal bharta Mon dinner, aloo-bhindi Tue "
+            "lunch, simple dal-chawal Wed...'). "
+            "Set `overwrite_existing` true only if she explicitly asks "
+            "to replace existing plans — otherwise the handler skips "
+            "days that already have any slot planned.",
         'input_schema': {
           'type': 'object',
           'properties': {
-            'month': {
+            'week_start': {
               'type': 'string',
               'description':
-                  'Target month as YYYY-MM (e.g. "2026-05"). If she says '
-                  '"this month" use the current month; "next month" use '
-                  'the next calendar month.',
+                  'First day of the 7-day plan as YYYY-MM-DD. If she '
+                  'just says "plan the week" default to today; "next '
+                  'Monday" to the next Monday; etc.',
+            },
+            'ingredients_bought': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description':
+                  "Ingredients she explicitly said she bought or has "
+                  "on hand and wants to consume. E.g. ['brinjal', "
+                  "'ladyfinger', 'potato', 'cauliflower'].",
+            },
+            'standard_pantry': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description':
+                  'Staples she always has. If she did not list any, '
+                  'pass a sensible default set (onion, tomato, dals, '
+                  'rice, atta, ghee, oil, ginger, garlic, basic spices) '
+                  'so the handler knows what you assumed.',
+            },
+            'slots': {
+              'type': 'array',
+              'items': {
+                'type': 'string',
+                'enum': [
+                  'breakfast',
+                  'brunch',
+                  'lunch',
+                  'eve_snacks',
+                  'dinner',
+                ],
+              },
+              'description':
+                  'Slots to plan. Default [breakfast, lunch, dinner] '
+                  'if omitted.',
             },
             'constraints': {
               'type': 'string',
               'description':
-                  'Her guardrails - e.g. veg only, no onion-garlic on '
-                  'Tuesdays, use paneer twice a week, toddler-friendly '
-                  'always, etc.',
+                  'Any guardrails — veg only, no onion-garlic Tuesday, '
+                  'light dinners, baby-friendly always, etc.',
             },
             'overwrite_existing': {
               'type': 'boolean',
               'description':
-                  'If true, overwrite slots that are already planned. '
-                  'Default false — handler skips days already planned.',
+                  'If true, overwrite any slot already planned on '
+                  'these 7 days. Default false.',
             },
-            'week_template': {
+            'days': {
               'type': 'array',
               'description':
-                  'Exactly 7 entries, one per weekday Mon..Sun. Order '
-                  'matters — entry 0 is Monday, entry 6 is Sunday.',
+                  'Exactly 7 entries, in order starting from '
+                  'week_start. Each entry has the date + the slots to '
+                  'fill for that day.',
               'items': {
                 'type': 'object',
                 'properties': {
+                  'date': {
+                    'type': 'string',
+                    'description': 'YYYY-MM-DD for this day.',
+                  },
                   'weekday': {
                     'type': 'string',
                     'enum': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
@@ -860,23 +916,36 @@ ${formatThoughts(recentThoughts)}
                           ],
                         },
                         'dish_name': {'type': 'string'},
-                        'notes': {'type': 'string'},
+                        'notes': {
+                          'type': 'string',
+                          'description':
+                              'Toddler adaptation or other short '
+                              'cooking note.',
+                        },
+                        'uses_ingredients': {
+                          'type': 'array',
+                          'items': {'type': 'string'},
+                          'description':
+                              'Which bought / pantry ingredients this '
+                              'dish consumes. Helps Rakhi see the '
+                              'logic and not worry about spoilage.',
+                        },
                       },
                       'required': ['slot', 'dish_name'],
                     },
                   },
                 },
-                'required': ['weekday', 'slots'],
+                'required': ['date', 'slots'],
               },
             },
             'summary': {
               'type': 'string',
               'description':
-                  'A one-line human-readable description of the weekly '
-                  'rhythm. Shown to Rakhi in chat as confirmation.',
+                  'One-line scannable summary of the week, highlighting '
+                  'how the bought ingredients get consumed.',
             },
           },
-          'required': ['month', 'week_template'],
+          'required': ['week_start', 'days'],
         },
       });
     }

@@ -3,6 +3,27 @@
 This file is loaded automatically at the start of every Claude Code session
 in this repo. Keep it tight — only workflows that future sessions MUST follow.
 
+## Branch awareness — check `git branch --show-current` FIRST
+
+This repo has two long-running branches. Before making ANY code change, run
+`git status` / `git branch --show-current` and confirm which branch the user
+is targeting:
+
+| Branch | Scope |
+|---|---|
+| `pallav-apk` | Pallav's stable Android APK. Bug fixes, APK ship-worthy changes. |
+| `rakhi-web` | Rakhi's Web PWA work (Flutter Web + meal plan + AI meal tools + FCM web push). |
+
+Rules:
+- Never commit changes that mix both scopes in a single session unless the
+  user explicitly says so.
+- If a shared file (e.g. `claude_service.dart`, `firestore_service.dart`)
+  needs a Pallav-only fix, make it on `pallav-apk`, then the user can merge
+  into `rakhi-web` when they switch sessions.
+- At session end, remind the user to `git push` if there are unpushed
+  commits on the current branch.
+- Tags: `v1.0.0+8-pallav-stable` marks the pre-Rakhi-PWA baseline.
+
 ## Bug-fix workflow
 
 Pallav reports bugs via the Jarvis chat on his phone (typing or voice):

@@ -118,11 +118,11 @@
 
     /*
       Wrapper div we tell Flutter to render *inside* via the hostElement
-      config. Positioned to the safe-area inset on every side so the
-      Flutter canvas is naturally constrained to the visible viewport.
-      Taps inside the canvas land on the visible widget; taps in the
-      safe-area strips fall through to our body pseudo-elements (which
-      are pointer-events:none and decorative).
+      config. Positioned to inset from the safe-area on every side, and
+      28px extra at the bottom to make room for the daily compliment
+      banner below it. Taps inside the canvas land on the visible
+      widget; taps in the safe-area strips fall through to our body
+      pseudo-elements (pointer-events:none, decorative only).
 
       IMPORTANT: this relies on scripts/deploy-web.ps1 patching
       build/web/flutter_bootstrap.js after `flutter build web` to pass
@@ -130,16 +130,57 @@
       Flutter falls back to document.body and the fallback CSS override
       below (flutter-view/flt-glass-pane) kicks in. The ps1 patch is
       more reliable because Flutter applies inline styles at runtime
-      that out-specificity the CSS rule, even with !important on every
-      declaration.
+      that out-specificity CSS rules, even with !important.
     */
     #flutter-root {
       position: fixed;
       top: env(safe-area-inset-top, 0px);
       left: env(safe-area-inset-left, 0px);
       right: env(safe-area-inset-right, 0px);
-      bottom: env(safe-area-inset-bottom, 0px);
+      /* Leave 28px above the home-indicator strip for the compliment
+         banner — roughly one icon height, enough to read a short line
+         without crowding Flutter's bottom nav against the gesture. */
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
       overflow: hidden;
+    }
+
+    /*
+      Daily compliment strip. Lives between Flutter (above) and the
+      iOS home-indicator zone (below). 28px tall, pink-ish translucent
+      gradient, italic serif text. Pointer-events:none so Flutter can
+      still claim any stray taps nearby. A tiny inline JS below picks
+      a line from the list based on day-of-year — different message
+      each calendar day.
+    */
+    #bottom-banner {
+      position: fixed;
+      left: env(safe-area-inset-left, 0px);
+      right: env(safe-area-inset-right, 0px);
+      bottom: env(safe-area-inset-bottom, 0px);
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(
+        90deg,
+        rgba(212, 123, 160, 0.20) 0%,
+        rgba(212, 123, 160, 0.45) 50%,
+        rgba(212, 123, 160, 0.20) 100%);
+      color: #6B2847;
+      font-family: Georgia, 'Times New Roman', serif;
+      font-style: italic;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      pointer-events: none;
+      z-index: 500;
+      padding: 0 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      /* Subtle top + bottom hairlines so the strip reads as a distinct
+         band rather than floating text. */
+      border-top: 1px solid rgba(212, 123, 160, 0.25);
+      border-bottom: 1px solid rgba(212, 123, 160, 0.15);
     }
 
     /*
@@ -170,6 +211,55 @@
     can query it.
   -->
   <div id="flutter-root"></div>
+  <!-- Daily compliment banner — text populated by the script below. -->
+  <div id="bottom-banner"></div>
+  <script>
+    // Warm, Rakhi-specific lines that rotate one-per-day. Keep each
+    // under ~45 chars so it fits on a 390px iPhone 13 viewport without
+    // ellipsis. Mix of praise, affection, and domestic-life recognition.
+    // Feel free to add/remove — rotation handles any length list.
+    var JARVIS_DAILY_LINES = [
+      "You look beautiful today \u2728",
+      "Your smile lights up the kitchen \ud83c\udf38",
+      "Palkhi is so lucky to have you \ud83d\udc95",
+      "Pallav's favourite part of home \ud83d\udc9d",
+      "You've got this, always have \ud83d\udc96",
+      "Today's your day to shine \u2728",
+      "Keep being the amazing you \u263a\ufe0f",
+      "That laugh of yours is everything \ud83e\udd70",
+      "You make every day better \ud83c\udf37",
+      "Rakhi, you're magic \ud83d\udcab",
+      "Mom, chef, entrepreneur \u2014 superwoman \ud83d\udcaa",
+      "The world slows down when you smile \ud83c\udf3a",
+      "You're glowing today \ud83c\udf1f",
+      "Every meal is a love letter \ud83c\udf7d\ufe0f\ud83d\udc95",
+      "Hey beautiful \ud83d\udc97",
+      "You're doing everything right \u2728",
+      "Palkhi's hero, Pallav's heart \ud83d\udc96",
+      "Grace in every moment \ud83c\udf39",
+      "Love you, Rakhi \ud83d\udc95",
+      "Proud of you today \ud83c\udf38",
+      "You + morning chai = perfect \ud83c\udf75\ud83d\udc97",
+      "Wearing that smile well today \ud83d\ude0a"
+    ];
+
+    // Deterministic per-day rotation: pick a line based on the number
+    // of days since the start of the current year. Gives a consistent
+    // daily message (same all day, different tomorrow) and cycles
+    // through the list every ~22 days.
+    (function setDailyLine() {
+      try {
+        var today = new Date();
+        var startOfYear = new Date(today.getFullYear(), 0, 0);
+        var dayOfYear = Math.floor((today - startOfYear) / 86400000);
+        var idx = dayOfYear % JARVIS_DAILY_LINES.length;
+        var el = document.getElementById('bottom-banner');
+        if (el) el.textContent = JARVIS_DAILY_LINES[idx];
+      } catch (e) {
+        // Non-fatal; banner stays empty if something weird happens.
+      }
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

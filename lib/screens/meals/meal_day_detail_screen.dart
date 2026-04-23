@@ -14,6 +14,7 @@ import '../../models/meal_plan_day.dart';
 import '../../models/user_profile.dart';
 import '../../services/firestore_service.dart';
 import 'dish_picker_sheet.dart';
+import 'nutrition_sheet.dart';
 
 class MealDayDetailScreen extends StatefulWidget {
   final UserProfile user;
@@ -91,6 +92,13 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
           // Auto-show optional rows if they're already planned.
           final brunchPlanned = plan.slot(MealSlotId.brunch) != null;
           final eveSnacksPlanned = plan.slot(MealSlotId.eveSnacks) != null;
+          // Only show the nutrition button when at least one slot has a
+          // dish planned — nothing to compute otherwise. Keeps the header
+          // uncluttered on empty days.
+          final hasAnyPlanned = MealSlotId.values.any((s) {
+            final v = plan.slot(s);
+            return v != null && v.dishId.isNotEmpty;
+          });
           return ListView(
             padding: const EdgeInsets.fromLTRB(
               JarvisTheme.md,
@@ -99,6 +107,10 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
               JarvisTheme.xxl,
             ),
             children: [
+              if (hasAnyPlanned) ...[
+                _buildNutritionButton(plan),
+                const SizedBox(height: JarvisTheme.sm),
+              ],
               _slotCard(plan, MealSlotId.breakfast),
               if (_showBrunch || brunchPlanned)
                 _slotCard(plan, MealSlotId.brunch)
@@ -116,6 +128,69 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Full-width pill at the top of the day-detail ListView. Tapping opens
+  /// `NutritionSheet`, which gathers the planned slots + their dish entries
+  /// (via the parent `_dishCache`) and hits Claude for a live calorie +
+  /// macro breakdown. Only rendered when at least one slot is planned.
+  Widget _buildNutritionButton(MealPlanDay plan) {
+    return OutlinedButton.icon(
+      onPressed: () => _openNutritionSheet(plan),
+      icon: Icon(Icons.local_fire_department,
+          color: widget.user.accentColor, size: 20),
+      label: Text(
+        'Show nutrition',
+        style: TextStyle(
+          color: widget.user.accentColor,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      style: OutlinedButton.styleFrom(
+        side: BorderSide(
+          color: widget.user.accentColor.withOpacity(0.5),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(JarvisTheme.small),
+        ),
+      ),
+    );
+  }
+
+  /// Ensure every planned dish is in `_dishCache`, then open the sheet.
+  /// Pre-warming means the sheet's computeDayNutrition call has the dish
+  /// names + ingredients + tags already; no extra round-trip inside the
+  /// sheet itself.
+  Future<void> _openNutritionSheet(MealPlanDay plan) async {
+    final plannedIds = <String>[
+      for (final s in MealSlotId.values)
+        if (plan.slot(s) != null && plan.slot(s)!.dishId.isNotEmpty)
+          plan.slot(s)!.dishId,
+    ];
+    // Load any dishes we haven't cached yet.
+    await Future.wait(
+      plannedIds
+          .where((id) => !_dishCache.containsKey(id))
+          .map((id) => _loadDish(id)),
+    );
+    if (!mounted) return;
+
+    final dishById = <String, Dish?>{
+      for (final id in plannedIds) id: _dishCache[id],
+    };
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => NutritionSheet(
+        user: widget.user,
+        date: widget.date,
+        plan: plan,
+        dishById: dishById,
       ),
     );
   }

@@ -1315,4 +1315,161 @@ ${formatThoughts(recentThoughts)}
       return <String, dynamic>{};
     }
   }
+
+  /// Compute approximate nutrition for a whole day's meals in one call.
+  /// Fed into the Show-Nutrition bottom sheet on meal_day_detail_screen.
+  ///
+  /// Caller passes the meals already-resolved client-side (slot + dish_name
+  /// + prep_minutes + ingredients + tags + optional notes) so Claude doesn't
+  /// need to do any Firestore lookups — it just has to apply its cooking
+  /// knowledge + the household portion table baked into the system prompt.
+  ///
+  /// Returns a map of shape:
+  /// ```
+  /// {
+  ///   'meals': [
+  ///     {
+  ///       'slot': 'lunch',
+  ///       'slot_label': 'Lunch',
+  ///       'dish_name': 'Dal Rice',
+  ///       'serving_note': '1 katori dal + 1 katori rice',
+  ///       'adult_portion_g': 320,
+  ///       'kcal_per_adult_serving': 420,
+  ///       'carbs_g': 65,
+  ///       'protein_g': 14,
+  ///       'fat_g': 9,
+  ///     },
+  ///     ...
+  ///   ],
+  ///   'household_totals': {
+  ///     'rakhi_kcal': 1850,
+  ///     'pallav_kcal': 2300,
+  ///     'palkhi_kcal': 1050,  // 2-year-old toddler
+  ///   },
+  ///   'caveat': 'approximate ±10-15%',
+  /// }
+  /// ```
+  ///
+  /// Never throws. Returns `{}` on any failure so the sheet can render a
+  /// graceful "couldn't compute — try again" state.
+  Future<Map<String, dynamic>> computeDayNutrition({
+    required String dateLabel,
+    required List<Map<String, dynamic>> meals,
+  }) async {
+    if (!_hasCredentials) return <String, dynamic>{};
+    if (meals.isEmpty) return <String, dynamic>{};
+
+    // Strict JSON system prompt. Keeps household context + portion anchors
+    // inline so Claude has one place to reason from. Numbers are tuned for
+    // typical Indian home-cooked serving sizes.
+    final system =
+        "You are a nutrition assistant for Rakhi's household in India. "
+        "Estimate calories + macros for a given day's meals. Respond with "
+        "ONLY a valid JSON object (no prose, no markdown fences).\n\n"
+        "HOUSEHOLD:\n"
+        "- Rakhi: adult woman, home chef, ~2000 kcal/day target (1.0x portion)\n"
+        "- Pallav: adult man, HVAC sales, ~2400 kcal/day target (1.2x portion)\n"
+        "- Palkhi: 2-year-old toddler daughter, ~1100 kcal/day target (0.4x portion, "
+        "milder spice, softer texture)\n\n"
+        "STANDARD INDIAN SERVING ANCHORS (per adult):\n"
+        "- 1 katori dal/sabzi ≈ 150 g (≈120-180 kcal for dal, ≈140-220 for sabzi)\n"
+        "- 1 plain roti ≈ 40 g ≈ 100-110 kcal\n"
+        "- 1 stuffed paratha (aloo/paneer/gobi) ≈ 120 g ≈ 260-320 kcal\n"
+        "- 1 katori rice ≈ 150 g ≈ 200 kcal\n"
+        "- 2 idli ≈ 100 g ≈ 160 kcal\n"
+        "- 1 dosa (plain) ≈ 100 g ≈ 170 kcal · masala dosa ≈ 280-330 kcal\n"
+        "- Poha 1 plate ≈ 180 g ≈ 280 kcal\n"
+        "- Upma 1 plate ≈ 180 g ≈ 300 kcal\n"
+        "- Paneer curry 1 katori ≈ 150 g ≈ 280-340 kcal (rich: +50)\n"
+        "- Rajma/chole 1 katori ≈ 150 g ≈ 220-270 kcal\n"
+        "- Biryani 1 plate ≈ 300 g ≈ 450-550 kcal\n"
+        "- Khichdi 1 bowl ≈ 250 g ≈ 250-320 kcal\n"
+        "- Samosa 1 pc ≈ 60 g ≈ 260 kcal · Pakora 6 pc ≈ 280 kcal\n"
+        "- Lassi (sweet) 1 glass ≈ 250 ml ≈ 180 kcal\n"
+        "- Chai 1 cup (with milk+sugar) ≈ 80 kcal\n\n"
+        "OUTPUT JSON SHAPE (exact fields, integers where noted, no floats):\n"
+        "{\n"
+        '  "meals": [\n'
+        "    {\n"
+        '      "slot": string (one of breakfast/brunch/lunch/eve_snacks/dinner),\n'
+        '      "slot_label": string ("Breakfast"/"Lunch" etc.),\n'
+        '      "dish_name": string,\n'
+        '      "serving_note": string (short, e.g. "2 rotis + 1 katori dal + salad"),\n'
+        '      "adult_portion_g": integer (grams per adult serving, rough),\n'
+        '      "kcal_per_adult_serving": integer,\n'
+        '      "carbs_g": integer,\n'
+        '      "protein_g": integer,\n'
+        '      "fat_g": integer\n'
+        "    }\n"
+        "  ],\n"
+        '  "household_totals": {\n'
+        '    "rakhi_kcal": integer (sum across all meals with rakhi 1.0x portion),\n'
+        '    "pallav_kcal": integer (1.2x portion),\n'
+        '    "palkhi_kcal": integer (0.4x portion, exclude heavy/spicy evening snacks)\n'
+        "  },\n"
+        '  "caveat": string (one short reminder like "approx ±10-15%")\n'
+        "}\n\n"
+        "Be pragmatic: numbers are rounded estimates, not lab-grade. Never "
+        "include trailing commas. No line breaks inside strings.";
+
+    // Compose the meal list compactly for the user message.
+    final lines = <String>[];
+    for (final m in meals) {
+      final slot = (m['slot'] ?? '').toString();
+      final label = (m['slot_label'] ?? '').toString();
+      final name = (m['dish_name'] ?? '').toString();
+      final prep = m['prep_minutes'];
+      final ingredients = (m['ingredients'] as List?)?.cast<dynamic>() ?? [];
+      final tags = (m['tags'] as List?)?.cast<dynamic>() ?? [];
+      final notes = (m['notes'] ?? '').toString();
+      final parts = <String>[
+        '$label [$slot]: $name',
+        if (prep is num) '${prep.toInt()}min',
+        if (tags.isNotEmpty) 'tags=${tags.take(4).join(",")}',
+        if (ingredients.isNotEmpty)
+          'ing=${ingredients.take(6).join(",")}',
+        if (notes.trim().isNotEmpty) 'notes="${notes.trim()}"',
+      ];
+      lines.add('- ${parts.join(" | ")}');
+    }
+    final userMessage = 'Date: $dateLabel\nMeals:\n${lines.join("\n")}';
+
+    final requestBody = {
+      'model': _model,
+      'max_tokens': 1024,
+      'system': system,
+      'messages': [
+        {'role': 'user', 'content': userMessage},
+      ],
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse(_chatEndpoint),
+        headers: _chatHeaders,
+        body: jsonEncode(requestBody),
+      );
+      if (response.statusCode != 200) return <String, dynamic>{};
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final content = (data['content'] as List?) ?? const [];
+      if (content.isEmpty) return <String, dynamic>{};
+      final first = content[0] as Map<String, dynamic>;
+      final text = (first['text'] ?? '').toString().trim();
+      if (text.isEmpty) return <String, dynamic>{};
+
+      // Strip ```json fences if Claude wrapped despite instructions.
+      var cleaned = text;
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned
+            .replaceFirst(RegExp(r'^```(json)?\s*'), '')
+            .replaceFirst(RegExp(r'\s*```$'), '');
+      }
+      final parsed = jsonDecode(cleaned);
+      if (parsed is! Map<String, dynamic>) return <String, dynamic>{};
+      return parsed;
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }
 }

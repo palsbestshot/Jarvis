@@ -452,10 +452,16 @@ class ChatNotifier extends Notifier<ChatState> {
         return '✓ Finance saved — $title';
 
       case 'save_meal':
-        final mealId = await _firestoreService.saveMeal(userId, toolInput);
-        final dayOfWeek = toolInput['day_of_week'] ?? 'day';
-        final mealType = toolInput['meal_type'] ?? 'meal';
-        return '✓ Meal saved — $dayOfWeek $mealType';
+        return await _handleSaveMeal(userId, toolInput);
+
+      case 'query_dishes':
+        return await _handleQueryDishes(userId, toolInput);
+
+      case 'suggest_dish_from_ingredients':
+        return _handleSuggestDish(toolInput);
+
+      case 'plan_day_meals':
+        return await _handlePlanDayMeals(userId, toolInput);
 
       case 'save_goal':
         final goalId = await _firestoreService.saveGoal(userId, toolInput);
@@ -603,6 +609,199 @@ class ChatNotifier extends Notifier<ChatState> {
       default:
         return '✓ Action completed.';
     }
+  }
+
+  // ── Meal-plan tool handlers (Rakhi only) ─────────────────────────
+
+  /// Fuzzy-match a dish name against Rakhi's catalog. Returns the
+  /// matching dish id, or null if no reasonable match exists.
+  /// Matching is case-insensitive and accepts prefix / contains matches.
+  Future<String?> _findDishByName(String userId, String name) async {
+    final trimmed = name.trim().toLowerCase();
+    if (trimmed.isEmpty) return null;
+    try {
+      final catalog = await _firestoreService.getDishCatalog(userId);
+      // Exact match first.
+      for (final d in catalog) {
+        final n = (d['name'] ?? '').toString().toLowerCase();
+        if (n == trimmed) return d['id']?.toString();
+      }
+      // Contains / prefix fallback.
+      for (final d in catalog) {
+        final n = (d['name'] ?? '').toString().toLowerCase();
+        if (n.contains(trimmed) || trimmed.contains(n)) {
+          return d['id']?.toString();
+        }
+      }
+    } catch (_) {/* fall through to null */}
+    return null;
+  }
+
+  /// Plan a single meal slot. If the dish isn't in the catalog, create
+  /// it first (tagged 'custom') so future suggestions can surface it.
+  Future<String> _handleSaveMeal(
+    String userId,
+    Map<String, dynamic> input,
+  ) async {
+    final mealType = (input['meal_type'] ?? 'lunch').toString();
+    final dishName = (input['dish_name'] ?? '').toString().trim();
+    if (dishName.isEmpty) {
+      return '✗ No dish name given.';
+    }
+    final dateRaw = (input['date'] ?? '').toString().trim();
+    final dateKey = _resolveDateKey(dateRaw);
+
+    // Find existing dish or auto-create a custom one.
+    var dishId = await _findDishByName(userId, dishName);
+    if (dishId == null) {
+      dishId = await _firestoreService.createDish(userId, {
+        'name': dishName,
+        'meal_types': [mealType],
+        'prep_minutes': 20,
+        'tags': ['custom'],
+        'ingredients': <String>[],
+      });
+    }
+    final notes = (input['notes'] ?? '').toString().trim();
+    await _firestoreService.setMealSlot(
+      userId,
+      dateKey,
+      mealType,
+      {
+        'dish_id': dishId,
+        if (notes.isNotEmpty) 'notes': notes,
+      },
+    );
+    await _firestoreService.incrementDishTimesUsed(userId, dishId);
+    return '✓ Meal planned — $dateKey $mealType: $dishName';
+  }
+
+  /// Pull dishes from Rakhi's catalog for Claude to consume. Filters
+  /// are applied client-side (catalog is small).
+  Future<String> _handleQueryDishes(
+    String userId,
+    Map<String, dynamic> input,
+  ) async {
+    final mealType = (input['meal_type'] ?? '').toString();
+    final tag = (input['tag'] ?? '').toString().toLowerCase();
+    final limitRaw = input['limit'];
+    final limit = (limitRaw is int)
+        ? limitRaw
+        : int.tryParse('$limitRaw') ?? 30;
+
+    final all = await _firestoreService.getDishCatalog(userId);
+    List<Map<String, dynamic>> filtered = all;
+    if (mealType.isNotEmpty) {
+      filtered = filtered.where((d) {
+        final mt = (d['meal_types'] as List?)?.cast<dynamic>() ?? [];
+        return mt.any((v) => v.toString() == mealType);
+      }).toList();
+    }
+    if (tag.isNotEmpty) {
+      filtered = filtered.where((d) {
+        final tags = (d['tags'] as List?)?.cast<dynamic>() ?? [];
+        return tags.any((v) => v.toString().toLowerCase() == tag);
+      }).toList();
+    }
+    final capped = filtered.take(limit.clamp(1, 80)).toList();
+    // Return a compact text blob — Claude reads tool_result as text.
+    final buf = StringBuffer();
+    buf.writeln('${capped.length} dishes in catalog:');
+    for (final d in capped) {
+      final name = d['name'] ?? '';
+      final prep = d['prep_minutes'] ?? '?';
+      final mt = ((d['meal_types'] as List?) ?? []).join(',');
+      final tags = ((d['tags'] as List?) ?? []).join(',');
+      final ing = ((d['ingredients'] as List?) ?? []).join(',');
+      final used = d['times_used'] ?? 0;
+      buf.writeln(
+          '- $name | ${prep}min | $mt | tags:$tags | ing:$ing | used:$used');
+    }
+    return buf.toString();
+  }
+
+  /// Render Claude's dish suggestions as a chat-friendly text block.
+  /// No Firestore writes — this is a suggestion surface. If Rakhi picks
+  /// one, her next message triggers save_meal for the chosen dish.
+  String _handleSuggestDish(Map<String, dynamic> input) {
+    final suggestions =
+        (input['suggestions'] as List?)?.cast<dynamic>() ?? [];
+    if (suggestions.isEmpty) {
+      return 'No suggestions generated.';
+    }
+    final buf = StringBuffer();
+    buf.writeln('Here are ${suggestions.length} ideas:');
+    for (var i = 0; i < suggestions.length; i++) {
+      final s = suggestions[i] as Map<String, dynamic>;
+      final name = s['dish_name'] ?? '';
+      final why = s['why'] ?? '';
+      final missing =
+          ((s['missing_ingredients'] as List?)?.cast<dynamic>() ?? [])
+              .join(', ');
+      buf.writeln('${i + 1}. $name');
+      if (why.toString().isNotEmpty) buf.writeln('   Why: $why');
+      if (missing.isNotEmpty) buf.writeln('   Still need: $missing');
+    }
+    buf.writeln('\nTell me which one and I\'ll add it to the slot.');
+    return buf.toString();
+  }
+
+  /// Plan multiple meals in one go. Each plan entry gets fuzzy-matched
+  /// against the catalog (auto-create if no match) and written to the
+  /// meal_plans doc. Revenue-neutral — just a batched save_meal.
+  Future<String> _handlePlanDayMeals(
+    String userId,
+    Map<String, dynamic> input,
+  ) async {
+    final dateKey = _resolveDateKey((input['date'] ?? '').toString());
+    final plan = (input['plan'] as List?)?.cast<dynamic>() ?? [];
+    if (plan.isEmpty) {
+      return '✗ No plan entries received.';
+    }
+    final savedParts = <String>[];
+    for (final entry in plan) {
+      if (entry is! Map<String, dynamic>) continue;
+      final slot = (entry['slot'] ?? '').toString();
+      final dishName = (entry['dish_name'] ?? '').toString().trim();
+      if (slot.isEmpty || dishName.isEmpty) continue;
+      var dishId = await _findDishByName(userId, dishName);
+      dishId ??= await _firestoreService.createDish(userId, {
+        'name': dishName,
+        'meal_types': [slot],
+        'prep_minutes': 20,
+        'tags': ['custom'],
+        'ingredients': <String>[],
+      });
+      final notes = (entry['notes'] ?? '').toString().trim();
+      await _firestoreService.setMealSlot(userId, dateKey, slot, {
+        'dish_id': dishId,
+        if (notes.isNotEmpty) 'notes': notes,
+      });
+      await _firestoreService.incrementDishTimesUsed(userId, dishId);
+      savedParts.add('$slot: $dishName');
+    }
+    if (savedParts.isEmpty) {
+      return '✗ Plan had no valid entries.';
+    }
+    return '✓ Day planned $dateKey — ${savedParts.join(" · ")}';
+  }
+
+  /// Normalise a YYYY-MM-DD string. Falls back to today if empty or
+  /// unparseable. Used by save_meal + plan_day_meals.
+  String _resolveDateKey(String raw) {
+    final trimmed = raw.trim();
+    DateTime d;
+    if (trimmed.isEmpty) {
+      d = DateTime.now();
+    } else {
+      try {
+        d = DateTime.parse(trimmed);
+      } catch (_) {
+        d = DateTime.now();
+      }
+    }
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
   }
 
   Future<void> sendImageMessage(String imagePath) async {

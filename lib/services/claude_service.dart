@@ -96,9 +96,19 @@ Thoughts/Notes → use save_thought tool
   - Not a task, just information to remember
   - Categories: Books | Finance | Personal | Work | Cooking | General
 
-Finance → use save_finance tool (Pallav only)
+Finance → use save_finance tool (both users)
 Goals → use save_goal tool
-Meals → use save_meal tool (Rakhi only)
+Meals / meal plans (Rakhi only) — four coordinated tools:
+  - save_meal: plan ONE dish for ONE slot on ONE date. "Dinner tomorrow
+    is Paneer Butter Masala", "Monday breakfast Poha".
+  - query_dishes: read her dish catalog BEFORE suggesting, so ideas
+    lean on dishes she actually uses.
+  - suggest_dish_from_ingredients: "I have tomato, paneer, onion — what
+    can I make for dinner?" → you return 2-4 tagged suggestions with
+    reasoning. Handler renders as tappable cards.
+  - plan_day_meals: "Plan tomorrow", "Fill Monday's lunch and dinner" —
+    propose a multi-slot plan, handler writes everything when Rakhi
+    confirms. Slots enum: breakfast | brunch | lunch | eve_snacks | dinner.
 
 Time / visit logging → use log_time tool (Pallav only)
   - "log 2 hours client meeting", "spent 30 min emails", "worked on
@@ -483,25 +493,206 @@ ${formatThoughts(recentThoughts)}
       });
     }
 
-    // Add meal tool for Rakhi only
+    // ── Meal-plan tools (Rakhi only) ──────────────────────────────
+    // Rewritten 2026-04-23 around the new 5-slot model + dish catalog.
+    // Four tools work as a small pipeline:
+    //   save_meal            → plan a specific slot with a specific dish
+    //   query_dishes         → ground suggestions in her actual catalog
+    //   suggest_dish_from_ingredients → propose 2-4 dishes matching ingredients
+    //   plan_day_meals       → lay out a full day (writes all slots at once)
     if (userId == AppConstants.rakhiUserId) {
-      tools.insert(7, {
+      tools.add({
         'name': 'save_meal',
+        'description':
+            "Plan or log a meal for a specific date + slot. Use when Rakhi "
+            "says 'dinner tomorrow is Paneer Butter Masala', 'Monday "
+            "breakfast Poha', 'brunch Sunday is fruit bowl', 'eve snacks "
+            "today was tea and samosa'. If the dish name isn't in her "
+            "catalog yet, pass it anyway — the handler does a fuzzy match "
+            "and auto-creates a custom dish entry if none matches.",
         'input_schema': {
           'type': 'object',
           'properties': {
-            'week_start': {'type': 'string'},
-            'day_of_week': {
+            'date': {
               'type': 'string',
-              'enum': AppConstants.daysOfWeek,
+              'description': 'YYYY-MM-DD. If omitted, defaults to today.',
             },
             'meal_type': {
               'type': 'string',
-              'enum': AppConstants.mealTypes,
+              'enum': [
+                'breakfast',
+                'brunch',
+                'lunch',
+                'eve_snacks',
+                'dinner',
+              ],
             },
-            'description': {'type': 'string'},
+            'dish_name': {
+              'type': 'string',
+              'description':
+                  "Dish name exactly as Rakhi said it. Fuzzy match happens "
+                  "server-side; no need to normalise.",
+            },
+            'notes': {'type': 'string'},
           },
-          'required': ['description'],
+          'required': ['meal_type', 'dish_name'],
+        },
+      });
+
+      tools.add({
+        'name': 'query_dishes',
+        'description':
+            "Read Rakhi's dish catalog. Call this FIRST when she asks for "
+            "ideas or ingredient-based suggestions, so your recommendations "
+            "prioritise dishes she already uses. Returns up to `limit` "
+            "dishes sorted by most-used.",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'meal_type': {
+              'type': 'string',
+              'enum': [
+                'breakfast',
+                'brunch',
+                'lunch',
+                'eve_snacks',
+                'dinner',
+              ],
+              'description': 'Optional — only return dishes tagged for this slot.',
+            },
+            'tag': {
+              'type': 'string',
+              'description':
+                  "Optional tag filter — e.g. 'veg', 'quick', 'protein', 'light'.",
+            },
+            'limit': {
+              'type': 'integer',
+              'description': 'Max dishes to return. Default 30, max 80.',
+            },
+          },
+        },
+      });
+
+      tools.add({
+        'name': 'suggest_dish_from_ingredients',
+        'description':
+            "Suggest 2-4 dishes Rakhi can make from a list of ingredients. "
+            "Use when she lists what she has and asks 'what can I make?'. "
+            "Consider both her existing dish_catalog (via query_dishes first) "
+            "AND general Indian cooking knowledge. Set `suggestions` with "
+            "entries each containing dish_name, why (short reasoning), and "
+            "missing_ingredients she'd still need to grab. Handler renders "
+            "these as tappable cards in chat.",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'ingredients': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description': 'Ingredients Rakhi said she has.',
+            },
+            'meal_type': {
+              'type': 'string',
+              'enum': [
+                'breakfast',
+                'brunch',
+                'lunch',
+                'eve_snacks',
+                'dinner',
+              ],
+              'description': "Which slot she's planning for.",
+            },
+            'prep_time_max': {
+              'type': 'integer',
+              'description': 'Max prep minutes she has.',
+            },
+            'suggestions': {
+              'type': 'array',
+              'description': 'You fill this in — 2 to 4 proposals.',
+              'items': {
+                'type': 'object',
+                'properties': {
+                  'dish_name': {'type': 'string'},
+                  'why': {'type': 'string'},
+                  'missing_ingredients': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                  },
+                },
+                'required': ['dish_name', 'why'],
+              },
+            },
+          },
+          'required': ['ingredients', 'suggestions'],
+        },
+      });
+
+      tools.add({
+        'name': 'plan_day_meals',
+        'description':
+            "Lay out a full or partial day of meals for Rakhi. Use when "
+            "she says 'plan tomorrow's meals', 'fill Monday's lunch and "
+            "dinner', 'what should I eat all day on Sunday'. Consider her "
+            "dish_catalog (call query_dishes first), vary dishes across "
+            "the day, and honour any constraints she mentions (light "
+            "dinner, mild spice for kids, 'use up the paneer', etc.). "
+            "Each plan entry is a {slot, dish_name, notes, reasoning}. "
+            "The handler writes every slot to her meal_plans doc for "
+            "that date and returns confirmation.",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'date': {
+              'type': 'string',
+              'description': 'YYYY-MM-DD. If omitted, defaults to today.',
+            },
+            'slots': {
+              'type': 'array',
+              'items': {
+                'type': 'string',
+                'enum': [
+                  'breakfast',
+                  'brunch',
+                  'lunch',
+                  'eve_snacks',
+                  'dinner',
+                ],
+              },
+              'description':
+                  'Which slots to plan. Default [breakfast, lunch, dinner].',
+            },
+            'constraints': {
+              'type': 'string',
+              'description':
+                  'Any guardrails mentioned — "light dinner", "use up the '
+                  'leftover paneer", "mild for kids", etc.',
+            },
+            'plan': {
+              'type': 'array',
+              'description':
+                  'Your proposed plan. One entry per slot you are filling.',
+              'items': {
+                'type': 'object',
+                'properties': {
+                  'slot': {
+                    'type': 'string',
+                    'enum': [
+                      'breakfast',
+                      'brunch',
+                      'lunch',
+                      'eve_snacks',
+                      'dinner',
+                    ],
+                  },
+                  'dish_name': {'type': 'string'},
+                  'notes': {'type': 'string'},
+                  'reasoning': {'type': 'string'},
+                },
+                'required': ['slot', 'dish_name'],
+              },
+            },
+          },
+          'required': ['plan'],
         },
       });
     }

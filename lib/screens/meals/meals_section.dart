@@ -113,16 +113,20 @@ class _MealsSectionState extends State<MealsSection> {
         // the top so the calendar doesn't just look like an empty grid.
         final nothingPlanned = byDateKey.values.every((d) => !d.hasAnyPlanned);
 
+        // BoardScreen puts section content inside a SingleChildScrollView,
+        // so the parent's height is unbounded. Using Expanded here made the
+        // whole MealsSection render as 0px on web ("blank meal plans"
+        // bug). Instead, let the grid shrink-wrap its intrinsic size via
+        // _buildCalendarGrid's own shrinkWrap/NeverScrollable setup.
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildMonthHeader(),
             const SizedBox(height: JarvisTheme.sm),
             if (nothingPlanned) _buildEmptyHint(),
             _buildWeekdayStrip(),
             const SizedBox(height: JarvisTheme.xs),
-            Expanded(
-              child: _buildCalendarGrid(firstOfMonth, lastOfMonth, byDateKey),
-            ),
+            _buildCalendarGrid(firstOfMonth, lastOfMonth, byDateKey),
           ],
         );
       },
@@ -246,6 +250,13 @@ class _MealsSectionState extends State<MealsSection> {
         JarvisTheme.md,
       ),
       child: GridView.builder(
+        // shrinkWrap so the grid computes its own intrinsic height (one
+        // row per week × childAspectRatio). Needed because the parent
+        // board screen wraps us in a SingleChildScrollView with no
+        // bounded height — without shrinkWrap the grid would collapse
+        // to zero and the meal plans tab appeared blank on the PWA.
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 7,
           mainAxisSpacing: 6,

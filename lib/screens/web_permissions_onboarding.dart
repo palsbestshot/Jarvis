@@ -81,19 +81,24 @@ class _WebPermissionsOnboardingState
       final ok =
           settings.authorizationStatus == AuthorizationStatus.authorized ||
               settings.authorizationStatus == AuthorizationStatus.provisional;
-      setState(() => _notif = ok ? _PermState.granted : _PermState.denied);
 
-      // If granted, also kick off the FCM token save so subsequent
-      // sends reach her iPhone without a second initialize round.
+      // AWAIT the token save before we flip the card to "granted" —
+      // earlier this was fire-and-forget and Rakhi could tap Continue
+      // before the Firestore write completed, which meant the very
+      // first "Send test notification" attempt would see no web token.
       if (ok) {
         final userId = ref.read(activeUserIdProvider);
         if (userId != null) {
-          // Fire-and-forget; NotificationService handles token save +
-          // Firestore write + token refresh listener registration.
-          NotificationService().initialize(userId);
+          try {
+            await NotificationService().initialize(userId);
+          } catch (_) {/* non-fatal — settings screen can re-register */}
         }
       }
+
+      if (!mounted) return;
+      setState(() => _notif = ok ? _PermState.granted : _PermState.denied);
     } catch (_) {
+      if (!mounted) return;
       setState(() => _notif = _PermState.denied);
     }
   }

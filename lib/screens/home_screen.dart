@@ -220,12 +220,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         String label;
         if (resp.statusCode == 200) {
           final json = jsonDecode(resp.body) as Map<String, dynamic>;
-          final sent = json['sent_to'] as Map<String, dynamic>?;
-          final hasWeb = sent?['web'] == true;
-          final hasPrimary = sent?['primary'] == true;
-          if (hasWeb || hasPrimary) {
-            label =
-                'Test push sent (${hasWeb ? 'web' : ''}${hasWeb && hasPrimary ? ' + ' : ''}${hasPrimary ? 'android' : ''}).';
+          final sent = json['sent_to'] as Map<String, dynamic>? ?? {};
+          // sendTestPush now returns a rich per-channel shape
+          // {exists, has_token, delivered, error, message_id}.
+          final web = sent['web'] as Map<String, dynamic>?;
+          final primary = sent['primary'] as Map<String, dynamic>?;
+          final webDelivered = web?['delivered'] == true;
+          final primaryDelivered = primary?['delivered'] == true;
+          final webError = web?['error']?.toString();
+          if (webDelivered || primaryDelivered) {
+            label = 'Test push delivered '
+                '(${webDelivered ? 'web' : ''}'
+                '${webDelivered && primaryDelivered ? ' + ' : ''}'
+                '${primaryDelivered ? 'android' : ''}).';
+          } else if (webError != null && webError.isNotEmpty) {
+            label = 'Web push failed: $webError';
           } else {
             label =
                 'No device tokens registered yet. Grant notification '

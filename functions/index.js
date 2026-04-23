@@ -1760,32 +1760,89 @@ exports.sendTestPush = functions
     if (!_checkAiSecret(req, res)) return;
     const userId = (req.query.userId || req.body?.userId || '').toString();
     if (!userId) return res.status(400).json({ error: 'userId required' });
-    try {
-      await sendFCMToUser(
-        userId,
-        'Jarvis',
-        'Test push — notifications are working.',
-        { type: 'test_push', click_url: '/' },
-      );
-      // Report what we found so the caller can debug "nothing arrived"
-      // without digging into Firestore directly.
-      const tokensRef = db.collection(`users/${userId}/device_tokens`);
-      const [primary, web] = await Promise.all([
-        tokensRef.doc('primary').get(),
-        tokensRef.doc('web').get(),
-      ]);
-      res.json({
-        ok: true,
-        sent_to: {
-          primary: primary.exists,
-          web: web.exists,
+
+    // Try to send to both channels INLINE (don't use sendFCMToUser —
+    // it swallows errors, and we want granular per-channel status back
+    // to the caller so the settings UI can surface "token exists but
+    // FCM rejected it" clearly. If the token's dead we still delete the
+    // doc so the next attempt registers a fresh one.
+    const tokensRef = db.collection(`users/${userId}/device_tokens`);
+    const [primarySnap, webSnap] = await Promise.all([
+      tokensRef.doc('primary').get(),
+      tokensRef.doc('web').get(),
+    ]);
+
+    const result = {
+      primary: {
+        exists: primarySnap.exists,
+        has_token: primarySnap.exists && !!primarySnap.data().fcm_token,
+        delivered: false,
+        error: null,
+        message_id: null,
+      },
+      web: {
+        exists: webSnap.exists,
+        has_token: webSnap.exists && !!webSnap.data().fcm_token,
+        delivered: false,
+        error: null,
+        message_id: null,
+      },
+    };
+
+    const trySend = async (key, snap, platform) => {
+      if (!snap.exists) return;
+      const token = snap.data().fcm_token;
+      if (!token) {
+        result[key].error = 'doc exists but fcm_token field is empty';
+        return;
+      }
+      const message = {
+        token,
+        notification: {
+          title: 'Jarvis test push',
+          body: 'If you see this on your home screen, push works end-to-end.',
         },
-      });
-    } catch (e) {
-      console.error('[sendTestPush] failed', e);
-      res.status(500).json({ error: e.message || String(e) });
-    }
+        data: {
+          source: 'sendTestPush',
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        },
+      };
+      if (platform === 'web') {
+        message.webpush = {
+          notification: {
+            icon: '/icons/Icon-192.png',
+            badge: '/icons/Icon-192.png',
+          },
+          fcmOptions: { link: '/' },
+        };
+      } else {
+        message.android = { priority: 'high' };
+      }
+      try {
+        const messageId = await admin.messaging().send(message);
+        result[key].delivered = true;
+        result[key].message_id = messageId;
+      } catch (e) {
+        // Surface the FCM error so the settings UI can show it. If the
+        // token is dead, also drop the doc so the client re-registers.
+        const code = e && e.code ? e.code : null;
+        const msg = e && e.message ? e.message : String(e);
+        result[key].error = code ? `${code}: ${msg}` : msg;
+        if (code === 'messaging/registration-token-not-registered') {
+          await snap.ref.delete().catch(() => {});
+          result[key].error += ' (dead token — doc deleted, please re-register)';
+        }
+      }
+    };
+
+    await Promise.all([
+      trySend('primary', primarySnap, 'android'),
+      trySend('web', webSnap, 'web'),
+    ]);
+
+    return res.json({ ok: true, sent_to: result });
   });
+
 
 // ─── AI PROXY FUNCTIONS (Rakhi's web PWA only) ──────────────────────────────
 //

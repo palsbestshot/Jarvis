@@ -32,6 +32,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final FirestoreService _svc = FirestoreService();
   bool _sendingTestPush = false;
   bool _registeringToken = false;
+  String? _diagReport;
 
   @override
   Widget build(BuildContext context) {
@@ -161,6 +162,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
             style: JarvisTheme.bodySmall
                 .copyWith(color: JarvisTheme.textMuted),
           ),
+          const SizedBox(height: JarvisTheme.md),
+          TextButton.icon(
+            onPressed: _showDiagnostic,
+            icon: Icon(Icons.bug_report_outlined,
+                size: 18, color: JarvisTheme.textMuted),
+            label: Text(
+              'Show notification diagnostic',
+              style: TextStyle(color: JarvisTheme.textMuted),
+            ),
+          ),
+          if (_diagReport != null) ...[
+            Container(
+              margin: const EdgeInsets.only(top: JarvisTheme.xs),
+              padding: const EdgeInsets.all(JarvisTheme.sm),
+              decoration: BoxDecoration(
+                color: JarvisTheme.surface2,
+                borderRadius:
+                    BorderRadius.circular(JarvisTheme.small),
+                border: Border.all(
+                  color: widget.user.accentColor.withOpacity(0.3),
+                ),
+              ),
+              child: SelectableText(
+                _diagReport!,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  color: JarvisTheme.textPrimary,
+                ),
+              ),
+            ),
+          ],
         ],
       );
     }
@@ -563,19 +596,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
       String label;
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        final sent = json['sent_to'] as Map<String, dynamic>?;
-        final hasWeb = sent?['web'] == true;
-        final hasPrimary = sent?['primary'] == true;
-        if (hasWeb && hasPrimary) {
-          label = 'Test push sent to web + Android.';
-        } else if (hasWeb) {
-          label = 'Test push sent to web. Check the home screen / lock screen.';
-        } else if (hasPrimary) {
-          label = 'Test push sent to Android.';
+        final sent = json['sent_to'] as Map<String, dynamic>? ?? {};
+
+        // New detailed shape: sent_to.{primary,web} is an object with
+        // exists / has_token / delivered / error / message_id. Summarise
+        // into a human-readable status so Rakhi can see exactly what
+        // broke (e.g. "token exists but FCM rejected it — dead token").
+        String summarise(Map<String, dynamic>? ch, String label) {
+          if (ch == null) return '';
+          final exists = ch['exists'] == true;
+          final hasToken = ch['has_token'] == true;
+          final delivered = ch['delivered'] == true;
+          final error = ch['error']?.toString();
+          if (delivered) return '✓ $label delivered';
+          if (!exists) return '$label: no token registered';
+          if (!hasToken) return '$label: token field empty';
+          if (error != null && error.isNotEmpty) return '$label failed: $error';
+          return '$label: unknown state';
+        }
+
+        final webCh = sent['web'] as Map<String, dynamic>?;
+        final primCh = sent['primary'] as Map<String, dynamic>?;
+        final parts = <String>[];
+        // Only surface the channel that matches the device running this
+        // button — showing "android failed" on Rakhi's iPhone would be
+        // confusing.
+        if (kIsWeb) {
+          parts.add(summarise(webCh, 'web'));
         } else {
+          parts.add(summarise(primCh, 'android'));
+        }
+        label = parts.where((s) => s.isNotEmpty).join(' · ');
+        if (label.isEmpty) {
           label =
-              'No device tokens registered yet. Tap "Re-register device" below '
-              'to grant notification permission and save the token.';
+              'No device registered. Tap "Re-register this device" below first.';
         }
       } else {
         label = 'Test push failed: HTTP ${resp.statusCode} — ${resp.body}';
@@ -583,7 +637,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(label),
-          duration: const Duration(seconds: 5),
+          duration: const Duration(seconds: 8),
         ),
       );
     } catch (e) {
@@ -597,6 +651,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _sendingTestPush = false);
     }
+  }
+
+  /// Dump the current notification state so Rakhi (or the dev) can see
+  /// exactly where the chain breaks. Reads:
+  ///   - platform + isWeb flag
+  ///   - FCM auth status (authorized / denied / not-determined)
+  ///   - whether a token is currently in memory (prefix only)
+  ///   - whether Firestore has the device_tokens/{web|primary} doc
+  ///   - VAPID key configured flag (web only)
+  Future<void> _showDiagnostic() async {
+    final buf = StringBuffer();
+    buf.writeln('Platform: ${kIsWeb ? 'web (browser PWA)' : 'native'}');
+    buf.writeln('User: ${widget.user.id}');
+
+    try {
+      final settings =
+          await FirebaseMessaging.instance.getNotificationSettings();
+      buf.writeln('Auth status: ${settings.authorizationStatus.name}');
+    } catch (e) {
+      buf.writeln('Auth status: ERROR ${e.toString()}');
+    }
+
+    if (kIsWeb) {
+      buf.writeln(
+        'VAPID key set: ${AppConstants.vapidPublicKey.isNotEmpty ? 'yes' : 'NO — push cannot work'}',
+      );
+    }
+
+    try {
+      final token = kIsWeb
+          ? await FirebaseMessaging.instance.getToken(
+              vapidKey: AppConstants.vapidPublicKey,
+            )
+          : await FirebaseMessaging.instance.getToken();
+      if (token == null) {
+        buf.writeln(
+          'FCM token: NULL (permission denied or VAPID/SW issue)',
+        );
+      } else {
+        buf.writeln('FCM token: ${token.substring(0, 20)}... (len ${token.length})');
+      }
+    } catch (e) {
+      buf.writeln('FCM token: ERROR ${e.toString()}');
+    }
+
+    try {
+      final docId = kIsWeb ? 'web' : 'primary';
+      final snap = await FirebaseFirestore.instance
+          .collection('users/${widget.user.id}/device_tokens')
+          .doc(docId)
+          .get();
+      if (!snap.exists) {
+        buf.writeln('Firestore token doc ($docId): MISSING');
+      } else {
+        final data = snap.data() ?? {};
+        final stored = (data['fcm_token'] ?? '').toString();
+        final updated = data['updated_at']?.toString() ?? '?';
+        buf.writeln(
+          'Firestore token doc ($docId): exists, '
+          'token=${stored.isEmpty ? 'EMPTY' : '${stored.substring(0, 20)}...'}, '
+          'updated=$updated',
+        );
+      }
+    } catch (e) {
+      buf.writeln('Firestore token doc: ERROR ${e.toString()}');
+    }
+
+    if (!mounted) return;
+    setState(() => _diagReport = buf.toString());
   }
 
   /// Re-run the notification onboarding for this device. Asks the OS

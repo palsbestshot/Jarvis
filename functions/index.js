@@ -1631,3 +1631,181 @@ exports.reopenBug = functions
       return res.status(500).json({ error: String(e.message || e) });
     }
   });
+
+// ─── AI PROXY FUNCTIONS (Rakhi's web PWA only) ──────────────────────────────
+//
+// Why these exist: Flutter Web bundles env.json straight into the JS. If the
+// web build shipped provider API keys, anyone opening devtools on Rakhi's
+// PWA URL could read Claude + OpenAI keys and burn her budget. Pallav's
+// Android APK keeps the same keys bundled (harder to extract, acceptable
+// risk) so his app keeps calling api.anthropic.com / api.openai.com
+// directly — these proxies are NEVER hit from Android.
+//
+// Auth: same X-Ingest-Secret header every other internal endpoint uses.
+// The secret is compiled into Rakhi's web build via
+// `flutter build web --dart-define-from-file=env.web.json`.
+//
+// CORS: the deployed PWA lives at https://<project>.web.app; browsers send
+// a preflight OPTIONS before every non-simple POST. Allow-origin '*' is
+// acceptable because requests must carry the secret header anyway — a
+// random origin without the secret gets 401.
+
+const _aiCorsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Ingest-Secret',
+  'Access-Control-Max-Age': '3600',
+};
+
+function _applyAiCors(res) {
+  for (const [k, v] of Object.entries(_aiCorsHeaders)) res.set(k, v);
+}
+
+function _checkAiSecret(req, res) {
+  const secret = req.headers['x-ingest-secret'];
+  const expected = process.env.INGEST_SECRET || '';
+  if (!expected || secret !== expected) {
+    res.status(401).json({ error: 'invalid secret' });
+    return false;
+  }
+  return true;
+}
+
+// POST /aiChat — proxy to Anthropic Messages API.
+// Body: exactly the shape claude_service would post to
+// api.anthropic.com/v1/messages (model, system, tools, messages,
+// max_tokens). Response is forwarded byte-for-byte so the Flutter
+// client can parse it with the same ClaudeResponse.fromJson.
+exports.aiChat = functions
+  .runWith({ invoker: 'public', timeoutSeconds: 60, memory: '512MB' })
+  .https.onRequest(async (req, res) => {
+    _applyAiCors(res);
+    if (req.method === 'OPTIONS') return res.status(204).send('');
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+    if (!_checkAiSecret(req, res)) return;
+
+    const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
+    if (!anthropicKey) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+    }
+
+    try {
+      const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': anthropicKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(req.body || {}),
+      });
+      const text = await upstream.text();
+      res.status(upstream.status).type('application/json').send(text);
+    } catch (e) {
+      console.error('[aiChat] upstream error', e);
+      res.status(502).json({ error: `upstream: ${e.message || e}` });
+    }
+  });
+
+// POST /aiTranscribe — proxy to OpenAI Whisper.
+// Body JSON (not multipart — easier from the browser):
+//   { audioBase64: string, mimeType?: string, language?: string }
+// Server rebuilds a proper multipart form and forwards to
+// api.openai.com/v1/audio/transcriptions. Returns { transcript }.
+exports.aiTranscribe = functions
+  .runWith({ invoker: 'public', timeoutSeconds: 60, memory: '512MB' })
+  .https.onRequest(async (req, res) => {
+    _applyAiCors(res);
+    if (req.method === 'OPTIONS') return res.status(204).send('');
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+    if (!_checkAiSecret(req, res)) return;
+
+    const openaiKey = process.env.OPENAI_API_KEY || '';
+    if (!openaiKey) {
+      return res.status(500).json({ error: 'OPENAI_API_KEY not configured' });
+    }
+
+    const { audioBase64, mimeType, language } = req.body || {};
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'audioBase64 required' });
+    }
+
+    try {
+      const bytes = Buffer.from(audioBase64, 'base64');
+      const blob = new Blob([bytes], { type: mimeType || 'audio/webm' });
+      const filename =
+        (mimeType || '').includes('mp4') ? 'voice.m4a'
+          : (mimeType || '').includes('webm') ? 'voice.webm'
+          : 'voice.mp3';
+      const form = new FormData();
+      form.append('file', blob, filename);
+      form.append('model', 'whisper-1');
+      form.append('response_format', 'text');
+      if (language) form.append('language', language);
+
+      const upstream = await fetch(
+        'https://api.openai.com/v1/audio/transcriptions',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${openaiKey}` },
+          body: form,
+        },
+      );
+      const text = await upstream.text();
+      if (!upstream.ok) {
+        console.error('[aiTranscribe] upstream', upstream.status, text);
+        return res.status(upstream.status).json({ error: text });
+      }
+      res.json({ transcript: text.trim() });
+    } catch (e) {
+      console.error('[aiTranscribe] error', e);
+      res.status(502).json({ error: `upstream: ${e.message || e}` });
+    }
+  });
+
+// POST /aiTTS — proxy to OpenAI /audio/speech.
+// Body: { text: string, voice?: string ('echo'|'nova'|...) }
+// Returns raw audio/mpeg bytes. AudioService.playFromBytes on web
+// feeds these straight to audioplayers' BytesSource.
+exports.aiTTS = functions
+  .runWith({ invoker: 'public', timeoutSeconds: 60, memory: '512MB' })
+  .https.onRequest(async (req, res) => {
+    _applyAiCors(res);
+    if (req.method === 'OPTIONS') return res.status(204).send('');
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+    if (!_checkAiSecret(req, res)) return;
+
+    const openaiKey = process.env.OPENAI_API_KEY || '';
+    if (!openaiKey) {
+      return res.status(500).json({ error: 'OPENAI_API_KEY not configured' });
+    }
+
+    const { text, voice } = req.body || {};
+    if (!text) return res.status(400).json({ error: 'text required' });
+
+    try {
+      const upstream = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openaiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'tts-1',
+          input: text,
+          voice: voice || 'echo',
+          response_format: 'mp3',
+        }),
+      });
+      if (!upstream.ok) {
+        const errText = await upstream.text();
+        console.error('[aiTTS] upstream', upstream.status, errText);
+        return res.status(upstream.status).json({ error: errText });
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.status(200).type('audio/mpeg').send(buf);
+    } catch (e) {
+      console.error('[aiTTS] error', e);
+      res.status(502).json({ error: `upstream: ${e.message || e}` });
+    }
+  });

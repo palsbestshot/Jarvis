@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import '../core/constants.dart';
@@ -11,6 +12,33 @@ class ClaudeService {
   final String _apiKey = AppConstants.claudeApiKey;
   final String _apiUrl = AppConstants.claudeApiUrl;
   final String _model = AppConstants.claudeModel;
+
+  // Endpoint + headers branch on platform.
+  //   Android / native → hit api.anthropic.com with x-api-key (unchanged).
+  //   Web / PWA        → hit our aiChat Cloud Function with X-Ingest-Secret,
+  //                      which forwards to Anthropic server-side so the
+  //                      Claude API key never ships to the browser.
+  String get _chatEndpoint => kIsWeb ? AppConstants.aiChatUrl : _apiUrl;
+
+  Map<String, String> get _chatHeaders {
+    if (kIsWeb) {
+      return {
+        'content-type': 'application/json',
+        'x-ingest-secret': AppConstants.ingestSecret,
+      };
+    }
+    return {
+      'x-api-key': _apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    };
+  }
+
+  /// True when we have what we need to make an outgoing chat call.
+  /// Web needs the ingest secret (compiled in via env.web.json);
+  /// Android needs the bundled Claude key.
+  bool get _hasCredentials =>
+      kIsWeb ? AppConstants.ingestSecret.isNotEmpty : _apiKey.isNotEmpty;
 
   // Build system prompt based on user profile and context
   String _buildSystemPrompt({
@@ -759,8 +787,12 @@ ${formatThoughts(recentThoughts)}
     required List<Map<String, dynamic>> recentThoughts,
     List<Map<String, dynamic>> recentChats = const [],
   }) async {
-    if (_apiKey.isEmpty) {
-      throw Exception('Claude API key not configured');
+    if (!_hasCredentials) {
+      throw Exception(
+        kIsWeb
+            ? 'Ingest secret not configured (set INGEST_SECRET in env.web.json)'
+            : 'Claude API key not configured',
+      );
     }
 
     final systemPrompt = _buildSystemPrompt(
@@ -811,12 +843,8 @@ ${formatThoughts(recentThoughts)}
 
     try {
       final response = await http.post(
-        Uri.parse(_apiUrl),
-        headers: {
-          'x-api-key': _apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
+        Uri.parse(_chatEndpoint),
+        headers: _chatHeaders,
         body: jsonEncode(requestBody),
       );
 
@@ -840,8 +868,12 @@ ${formatThoughts(recentThoughts)}
     required List<Map<String, dynamic>> recentTasks,
     required List<Map<String, dynamic>> recentThoughts,
   }) async {
-    if (_apiKey.isEmpty) {
-      throw Exception('Claude API key not configured');
+    if (!_hasCredentials) {
+      throw Exception(
+        kIsWeb
+            ? 'Ingest secret not configured (set INGEST_SECRET in env.web.json)'
+            : 'Claude API key not configured',
+      );
     }
 
     final systemPrompt = _buildSystemPrompt(
@@ -851,7 +883,12 @@ ${formatThoughts(recentThoughts)}
       inputType: 'text',
     );
 
-    final imageBytes = await File(imagePath).readAsBytes();
+    // dart:io File doesn't work on Flutter Web — image_picker returns
+    // a blob URL there. Read blob bytes via http.get on web; keep the
+    // existing native file read on Android.
+    final imageBytes = kIsWeb
+        ? (await http.get(Uri.parse(imagePath))).bodyBytes
+        : await File(imagePath).readAsBytes();
     final base64Image = base64Encode(imageBytes);
     final ext = imagePath.split('.').last.toLowerCase();
     final mediaType = ext == 'png'
@@ -890,12 +927,8 @@ ${formatThoughts(recentThoughts)}
 
     try {
       final response = await http.post(
-        Uri.parse(_apiUrl),
-        headers: {
-          'x-api-key': _apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
+        Uri.parse(_chatEndpoint),
+        headers: _chatHeaders,
         body: jsonEncode(requestBody),
       );
 

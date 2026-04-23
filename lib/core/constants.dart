@@ -79,9 +79,20 @@ class AppConstants {
   static const String whisperModel = 'whisper-1';
   static const String ttsModel = 'tts-1';
   
-  // API endpoints
+  // API endpoints (Android / native). These hit providers directly using
+  // bundled env.json keys — Pallav's APK path, unchanged.
   static const String claudeApiUrl = 'https://api.anthropic.com/v1/messages';
   static const String openaiApiUrl = 'https://api.openai.com/v1';
+
+  // AI proxy endpoints (Flutter Web / PWA only). Rakhi's web build routes
+  // every AI call through these Firebase Functions so provider keys never
+  // touch the browser. Auth is the X-Ingest-Secret header. See
+  // functions/index.js → aiChat / aiTranscribe / aiTTS.
+  static const String _functionsBase =
+      'https://us-central1-jarvis-78573.cloudfunctions.net';
+  static const String aiChatUrl = '$_functionsBase/aiChat';
+  static const String aiTranscribeUrl = '$_functionsBase/aiTranscribe';
+  static const String aiTtsUrl = '$_functionsBase/aiTTS';
   
   // App version
   static const String appVersion = '1.0.0';

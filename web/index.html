@@ -20,16 +20,18 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="Rakhi's personal assistant — tasks, meals, thoughts.">
   <!--
-    No `viewport-fit=cover` on purpose. With cover, iOS lets the PWA
-    content render edge-to-edge (under the notch + home-indicator), and
-    Flutter Web's glass-pane canvas fills the *full* viewport including
-    the safe-area strips. iOS then visually masks the strips but pointer
-    events still land at y=0 of the canvas — result: you tap the visible
-    icon and hit a coordinate ~47px too low (top) or a gesture area
-    (bottom). Without cover, iOS constrains the PWA viewport to the
-    visible-safe region and Flutter's canvas naturally aligns with it.
+    viewport-fit=cover: content CAN render under the notch + home
+    indicator (we want that, so we can paint a pretty gradient strip
+    there). The previously-reported touch-offset bug is NOT caused by
+    viewport-fit itself — it's caused by Flutter Web's flutter-view
+    element being position:fixed to the *full* viewport so its touch
+    hit-test runs edge-to-edge while the user visually sees content
+    masked by iOS system UI. We now override flutter-view's CSS to
+    inset it by env(safe-area-inset-*), so visual and tap positions
+    align, AND we paint our own gradient+sparkle design in the reserved
+    strips around it.
   -->
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#D47BA0">
 
   <!-- iOS PWA meta tags. `apple-mobile-web-app-capable` is the legacy
@@ -37,15 +39,13 @@
        modern one. Both need to be set so Rakhi's "Add to Home Screen"
        launches standalone (no Safari chrome).
 
-       Status bar style = `default` (not black-translucent) because the
-       translucent setting combined with no-viewport-fit-cover causes
-       iOS to overlap the status bar with the PWA content, triggering
-       the exact touch-offset bug above. `default` gives iOS a real
-       reserved strip for the status bar, so Flutter's canvas lives
-       cleanly below it. -->
+       black-translucent = iOS overlays only the status bar icons onto
+       whatever we paint underneath. Combined with our gradient strip
+       below, Rakhi sees a continuous dark-rose band from the notch
+       down through her content. -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Jarvis">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
@@ -55,11 +55,6 @@
   <title>Jarvis</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Minimal CSS reset. No safe-area-inset padding here anymore — once
-       viewport-fit=cover is off, iOS constrains the viewport to the
-       safe region itself, and adding our own padding would double-pad
-       and re-create the offset bug. touch-action=manipulation disables
-       Safari's double-tap-to-zoom delay. -->
   <style>
     html, body {
       margin: 0;
@@ -70,6 +65,76 @@
       -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
       background-color: #FFF5F8;
+    }
+
+    /*
+      TOP GRADIENT STRIP — covers the iPhone notch / Dynamic Island area.
+      Uses a diagonal rose → pink gradient with 4 soft white sparkles
+      sprinkled across it for a subtle feminine touch. The strip is
+      sized to safe-area-inset-top (0 on desktop, ~47px on iPhone 13
+      PWA, ~59px on Pro Max).
+
+      pointer-events: none + z-index above Flutter's canvas so the
+      design shows on top but taps that somehow land here (shouldn't
+      happen once we inset flutter-view below) fall through harmlessly.
+    */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: env(safe-area-inset-top, 0px);
+      background:
+        radial-gradient(circle at 15% 50%, rgba(255,255,255,0.28) 0%, transparent 2.5%),
+        radial-gradient(circle at 42% 30%, rgba(255,255,255,0.22) 0%, transparent 2%),
+        radial-gradient(circle at 68% 65%, rgba(255,255,255,0.28) 0%, transparent 2.5%),
+        radial-gradient(circle at 90% 35%, rgba(255,255,255,0.22) 0%, transparent 2%),
+        linear-gradient(135deg, #8B3A5C 0%, #B25078 45%, #D47BA0 100%);
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    /*
+      BOTTOM STRIP — covers the iPhone home-indicator area.
+      Lighter gradient blending down into the app's light-pink
+      background, plus 3 sparkles. Again pointer-events: none.
+    */
+    body::after {
+      content: '';
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: env(safe-area-inset-bottom, 0px);
+      background:
+        radial-gradient(circle at 25% 40%, rgba(255,255,255,0.3) 0%, transparent 3%),
+        radial-gradient(circle at 55% 70%, rgba(255,255,255,0.22) 0%, transparent 2.5%),
+        radial-gradient(circle at 82% 30%, rgba(255,255,255,0.3) 0%, transparent 3%),
+        linear-gradient(0deg, #E8A6C0 0%, #F4CFDF 60%, #FFF5F8 100%);
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    /*
+      CRITICAL: force Flutter's root element to live *inside* the
+      safe-area. Flutter Web ships this element as position:fixed
+      top:0 left:0 bottom:0 right:0 (full viewport), which causes the
+      hit-test offset Rakhi reported: visually masked by iOS system
+      UI but the canvas's internal y=0 is up at the top of the notch.
+      Setting top/bottom to safe-area-inset-* insets the canvas so
+      visual and tap coordinates align. Targets both the modern
+      (Flutter 3.22+) and legacy element names.
+    */
+    flutter-view,
+    flt-glass-pane {
+      position: fixed !important;
+      top: env(safe-area-inset-top, 0px) !important;
+      left: env(safe-area-inset-left, 0px) !important;
+      right: env(safe-area-inset-right, 0px) !important;
+      bottom: env(safe-area-inset-bottom, 0px) !important;
+      width: auto !important;
+      height: auto !important;
     }
   </style>
 </head>

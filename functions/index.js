@@ -356,15 +356,20 @@ exports.checkReminders = functions.pubsub
     return null;
   });
 
-// ─── FUNCTION 2: Morning briefing 7am IST ────────────────────────────────────
+// ─── FUNCTION 2: Morning briefing 7am IST (Pallav only) ─────────────────────
 // Claude Haiku generates a contextual quote + insight on how to tackle today
 // + the one-thing-to-do-first. Falls back to a random static quote if the
 // Claude call fails so the user still gets a briefing.
+//
+// Rakhi has her own `rakhiMorningBrief` at 7:30 AM that uses her meal plan
+// + pending tasks with a warm-companion tone. She does NOT receive this
+// generic briefing any more — we dropped her from the users array so she
+// only hears one morning push, the one that actually names her meals.
 exports.morningBriefing = functions.pubsub
   .schedule('0 7 * * *')
   .timeZone('Asia/Kolkata')
   .onRun(async () => {
-    const users = ['pallav', 'rakhi'];
+    const users = ['pallav'];
     const today = new Date();
     const dateStr = today.toLocaleDateString('en-US', {
       weekday: 'long', month: 'long', day: 'numeric',
@@ -428,12 +433,15 @@ exports.morningBriefing = functions.pubsub
     return null;
   });
 
-// ─── FUNCTION 3: Mid-morning nudge 10:30am IST ───────────────────────────────
+// ─── FUNCTION 3: Mid-morning nudge 10:30am IST (Pallav only) ─────────────────
+// Nags the user to do their first task if nothing's been completed yet.
+// Rakhi is a home-chef-plus-toddler-mum, not someone who needs a productivity
+// nag at 10:30 AM — she's in the kitchen. Dropped for her.
 exports.midMorningNudge = functions.pubsub
   .schedule('30 10 * * *')
   .timeZone('Asia/Kolkata')
   .onRun(async () => {
-    const users = ['pallav', 'rakhi'];
+    const users = ['pallav'];
     const todayStr = new Date().toISOString().split('T')[0];
 
     for (const userId of users) {
@@ -453,15 +461,19 @@ exports.midMorningNudge = functions.pubsub
     return null;
   });
 
-// ─── FUNCTION 4: Evening wrap 8pm IST ────────────────────────────────────────
+// ─── FUNCTION 4: Evening wrap 8pm IST (Pallav only) ──────────────────────────
 // Claude reads today's done vs undone + tomorrow's scheduled tasks and
 // generates: reflection on today, a concrete plan for tomorrow, the single
 // best task to start tomorrow with, and a closing 1-liner.
+//
+// Rakhi has her own `rakhiEveningBrief` at 5:30 PM that names tonight's
+// dinner + tomorrow's lunch. 8 PM is too late for her — she's putting the
+// toddler to bed — so we dropped her from this array.
 exports.eveningWrap = functions.pubsub
   .schedule('0 20 * * *')
   .timeZone('Asia/Kolkata')
   .onRun(async () => {
-    const users = ['pallav', 'rakhi'];
+    const users = ['pallav'];
     const istFmt = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Kolkata',
       year: 'numeric', month: '2-digit', day: '2-digit',
@@ -532,11 +544,14 @@ exports.eveningWrap = functions.pubsub
   });
 
 // ─── FUNCTION 5: Weekly summary Sunday 7pm IST ───────────────────────────────
+// Pallav gets the classic task+thought count summary.
+// Rakhi (moved earlier to 6 PM via the separate `rakhiWeeklySummary` below)
+// no longer hits this branch — she's dropped from the users array.
 exports.weeklySummary = functions.pubsub
   .schedule('0 19 * * 0')
   .timeZone('Asia/Kolkata')
   .onRun(async () => {
-    const users = ['pallav', 'rakhi'];
+    const users = ['pallav'];
 
     for (const userId of users) {
       const weekAgo = new Date();
@@ -559,6 +574,73 @@ exports.weeklySummary = functions.pubsub
 
       await savePendingMessage(userId, message, 'weekly_summary');
       await sendFCMToUser(userId, 'JARVIS Weekly', message, { type: 'briefing' });
+    }
+    return null;
+  });
+
+// ─── FUNCTION: Rakhi weekly wrap Sunday 6pm IST ──────────────────────────────
+// Reads her last 7 days of meal_plans + dish_catalog times_used to figure
+// out what she cooked most this week. Invites her to plan next week from
+// the veggies in the fridge. Silent if she planned nothing this week —
+// don't shame her.
+exports.rakhiWeeklySummary = functions.pubsub
+  .schedule('0 18 * * 0')
+  .timeZone('Asia/Kolkata')
+  .onRun(async () => {
+    const userId = 'rakhi';
+    try {
+      const today = new Date();
+      const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const todayKey = _istDateKey(today);
+      const fromKey = _istDateKey(sevenDaysAgo);
+
+      // Range-read the week's meal_plans. Each doc can have up to 5 slots;
+      // we count every slot that has a dish_id and aggregate by dish name.
+      const plansSnap = await db
+        .collection(`users/${userId}/meal_plans`)
+        .where('date_key', '>=', fromKey)
+        .where('date_key', '<=', todayKey)
+        .get();
+
+      const slotKeys = ['breakfast', 'brunch', 'lunch', 'eve_snacks', 'dinner'];
+      const dishCounts = new Map(); // dish_id -> count
+      let totalSlots = 0;
+      for (const doc of plansSnap.docs) {
+        const plan = doc.data() || {};
+        for (const k of slotKeys) {
+          const slot = plan[k];
+          if (slot && typeof slot === 'object' && slot.dish_id) {
+            dishCounts.set(slot.dish_id, (dishCounts.get(slot.dish_id) || 0) + 1);
+            totalSlots++;
+          }
+        }
+      }
+
+      if (totalSlots === 0) {
+        console.log('[rakhiWeeklySummary] no meals planned this week, silent');
+        return null;
+      }
+
+      // Top dish by count, resolve its name.
+      let topDishId = null, topCount = 0;
+      for (const [id, n] of dishCounts.entries()) {
+        if (n > topCount) { topDishId = id; topCount = n; }
+      }
+      const topDishName = topDishId
+        ? await _resolveDishName(userId, topDishId)
+        : null;
+
+      const body = topDishName
+        ? `This week — ${totalSlots} meals planned, top dish: ${topDishName} ×${topCount}. Want to plan next week from your veggies?`
+        : `This week — ${totalSlots} meals planned. Want to plan next week from your veggies?`;
+
+      await sendFCMToUser(userId, 'Week wrap 🌸', body, {
+        type: 'weekly_wrap',
+        click_url: '/',
+      });
+      console.log(`[rakhiWeeklySummary] sent: ${body}`);
+    } catch (e) {
+      console.error('[rakhiWeeklySummary] failed', e);
     }
     return null;
   });
@@ -630,7 +712,10 @@ exports.generateRecurringTasks = functions.pubsub
     return null;
   });
 
-// ─── FUNCTION 7: Breakfast reminder 9am IST ──────────────────────────────────
+// ─── FUNCTION 7: Breakfast reminder 9am IST (Pallav only) ────────────────────
+// Rakhi doesn't need a generic breakfast ping — she's a home chef, she knows
+// breakfast time. Her `rakhiMorningBrief` at 7:30 AM covers the whole day's
+// meals with her actual plan.
 exports.breakfastReminder = functions.pubsub
   .schedule('0 9 * * *')
   .timeZone('Asia/Kolkata')
@@ -642,25 +727,25 @@ exports.breakfastReminder = functions.pubsub
     ];
     const msg = messages[Math.floor(Math.random() * messages.length)];
     await sendFCMToUser('pallav', 'JARVIS', msg, {type: 'nudge'});
-    await sendFCMToUser('rakhi', 'JARVIS', 
-      'Good morning! Time for breakfast 🌅', {type: 'nudge'});
     return null;
   });
 
-// ─── FUNCTION 8: Lunch reminder 1:30pm IST ───────────────────────────────────
+// ─── FUNCTION 8: Lunch reminder 1:30pm IST (Pallav only) ─────────────────────
+// Rakhi gets `rakhiLunchPrepNudge` at 11:30 AM with her actual planned dish
+// + prep time. Don't double-ping her with a generic "Lunch time!".
 exports.lunchReminder = functions.pubsub
   .schedule('30 13 * * *')
   .timeZone('Asia/Kolkata')
   .onRun(async () => {
-    await sendFCMToUser('pallav', 'JARVIS', 
+    await sendFCMToUser('pallav', 'JARVIS',
       'Lunch break, Pallav. Step away from work for 30 minutes.',
       {type: 'nudge'});
-    await sendFCMToUser('rakhi', 'JARVIS',
-      'Lunch time! 🍽️', {type: 'nudge'});
     return null;
   });
 
-// ─── FUNCTION 9: Dinner reminder 9pm IST ─────────────────────────────────────
+// ─── FUNCTION 9: Dinner reminder 9pm IST (Pallav only) ───────────────────────
+// Rakhi gets her dinner info via `rakhiEveningBrief` at 5:30 PM — 9 PM is
+// bedtime for the toddler, wrong time to ping her.
 exports.dinnerReminder = functions.pubsub
   .schedule('0 21 * * *')
   .timeZone('Asia/Kolkata')
@@ -680,15 +765,31 @@ exports.dinnerReminder = functions.pubsub
       msg += 'All tasks done today. Well earned rest.';
     }
     await sendFCMToUser('pallav', 'JARVIS', msg, {type: 'nudge'});
-    await sendFCMToUser('rakhi', 'JARVIS',
-      'Dinner time! 🌙', {type: 'nudge'});
     return null;
   });
 
-// ─── FUNCTION: Rakhi meal-prep nudge 8am IST ────────────────────────────────
-// Rakhi-only. Reads today's meal_plans doc and whispers the planned lunch
-// + dinner ("Today's lunch: Dal Rice. Dinner: Roti + Paneer Bhurji.") so
-// she can start prep timing in her head. No-op when nothing is planned.
+// ─── RAKHI NOTIFICATION STACK ───────────────────────────────────────────────
+//
+// Rakhi gets three scheduled pings a day, each one grounded in her actual
+// meal plan + pending tasks rather than generic "lunch time!" noise:
+//
+//   07:30 IST  rakhiMorningBrief      — lunch/dinner + any tasks due today
+//   11:30 IST  rakhiLunchPrepNudge    — heads-up with prep minutes + ingredients
+//   17:30 IST  rakhiEveningBrief      — dinner + tomorrow's lunch preview
+//
+// Plus:
+//   every min  checkReminders         — fires any one-shot reminder she set
+//                                       via chat ("remind me to call mom 5pm")
+//   Sun 18:00  weeklySummary (Rakhi   — cooking summary + planner nudge
+//              branch)
+//
+// Each brief is SILENT on days when there's nothing specific to say (no meal
+// plan AND no pending tasks) — we don't fake a greeting to hit cadence.
+//
+// All three compose their strings server-side, so any edit here is live
+// within ~2 minutes of `firebase deploy --only functions` — no client build
+// or PWA refresh required.
+
 function _istDateKey(date = new Date()) {
   // IST = UTC+05:30 regardless of daylight saving (India doesn't observe).
   const istMs = date.getTime() + 5.5 * 60 * 60 * 1000;
@@ -707,8 +808,127 @@ async function _resolveDishName(userId, dishId) {
   }
 }
 
-exports.mealPrepReminder = functions.pubsub
-  .schedule('0 8 * * *')
+/// Resolve a dish_id to the full catalog entry (name + prep_minutes +
+/// ingredients + tags). Used by rakhiLunchPrepNudge to compose a heads-up
+/// with prep time + the first few ingredients.
+async function _resolveDishDetails(userId, dishId) {
+  if (!dishId) return null;
+  try {
+    const snap = await db.doc(`users/${userId}/dish_catalog/${dishId}`).get();
+    if (!snap.exists) return null;
+    const d = snap.data() || {};
+    return {
+      name: d.name || null,
+      prep_minutes: (typeof d.prep_minutes === 'number') ? d.prep_minutes : 20,
+      ingredients: Array.isArray(d.ingredients) ? d.ingredients : [],
+      tags: Array.isArray(d.tags) ? d.tags : [],
+    };
+  } catch (e) {
+    console.error('[_resolveDishDetails] failed', dishId, e.message || e);
+    return null;
+  }
+}
+
+/// Fetch Rakhi's pending tasks whose due_date is today (IST). Sorted by
+/// priority (high > medium > low) with a max of 3 entries — morning +
+/// evening briefs lead with the first one.
+async function _rakhiTodayPendingTasks(todayKey) {
+  try {
+    const snap = await db
+      .collection('users/rakhi/tasks')
+      .where('status', '==', 'pending')
+      .where('due_date', '==', todayKey)
+      .get();
+    const priorityRank = { high: 0, medium: 1, low: 2 };
+    return snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) =>
+        (priorityRank[a.priority] ?? 1) - (priorityRank[b.priority] ?? 1))
+      .slice(0, 3);
+  } catch (e) {
+    console.error('[_rakhiTodayPendingTasks] failed', e.message || e);
+    return [];
+  }
+}
+
+// ─── FUNCTION: Rakhi morning brief 7:30am IST ───────────────────────────────
+// Reads today's meal_plans doc + her top pending tasks for today, then
+// composes a warm-companion brief that names the actual dishes and the
+// one task she should tackle first. Silent if nothing to say.
+exports.rakhiMorningBrief = functions.pubsub
+  .schedule('30 7 * * *')
+  .timeZone('Asia/Kolkata')
+  .onRun(async () => {
+    const userId = 'rakhi';
+    const todayKey = _istDateKey();
+    try {
+      const [planSnap, pendingTasks] = await Promise.all([
+        db.doc(`users/${userId}/meal_plans/${todayKey}`).get(),
+        _rakhiTodayPendingTasks(todayKey),
+      ]);
+
+      const plan = planSnap.exists ? (planSnap.data() || {}) : {};
+      const [lunchName, dinnerName] = await Promise.all([
+        _resolveDishName(userId, plan.lunch?.dish_id),
+        _resolveDishName(userId, plan.dinner?.dish_id),
+      ]);
+
+      const hasLunch = !!lunchName;
+      const hasDinner = !!dinnerName;
+      const hasTasks = pendingTasks.length > 0;
+      const firstTaskTitle = hasTasks ? (pendingTasks[0].title || '').trim() : '';
+      const taskCountLabel =
+        pendingTasks.length === 1 ? '1 task' : `${pendingTasks.length} tasks`;
+
+      // Silent on dead days — nothing planned + nothing to do.
+      if (!hasLunch && !hasDinner && !hasTasks) {
+        console.log(`[rakhiMorningBrief] silent on ${todayKey} — nothing to say`);
+        return null;
+      }
+
+      let body;
+      if (hasLunch && hasDinner && hasTasks) {
+        body =
+          `Today — Lunch: ${lunchName} • Dinner: ${dinnerName}. ` +
+          `${taskCountLabel} due${firstTaskTitle ? `: ${firstTaskTitle}` : ''}.`;
+      } else if (hasLunch && hasDinner) {
+        body =
+          `Today — Lunch: ${lunchName} • Dinner: ${dinnerName}. ` +
+          `Toddler-easy day 💕`;
+      } else if (hasDinner && !hasLunch) {
+        body =
+          `Dinner tonight: ${dinnerName}. Lunch still open — ask me for ideas.` +
+          (hasTasks ? ` (${taskCountLabel} due)` : '');
+      } else if (hasLunch && !hasDinner) {
+        body =
+          `Lunch today: ${lunchName}. Dinner still open — ask me for ideas.` +
+          (hasTasks ? ` (${taskCountLabel} due)` : '');
+      } else {
+        // Only tasks, no meals planned.
+        body =
+          `${taskCountLabel} due today` +
+          (firstTaskTitle ? `. First up: ${firstTaskTitle}.` : '.');
+      }
+
+      await sendFCMToUser(userId, 'Good morning ☀️', body, {
+        type: 'morning_brief',
+        date: todayKey,
+        click_url: '/',
+      });
+      console.log(`[rakhiMorningBrief] sent for ${todayKey}: ${body}`);
+    } catch (e) {
+      console.error('[rakhiMorningBrief] failed', e);
+    }
+    return null;
+  });
+
+// ─── FUNCTION: Rakhi lunch prep heads-up 11:30am IST ────────────────────────
+// Fires 90 minutes before a typical 1pm lunch, but ONLY when the day's
+// lunch dish actually needs real prep (>= 15 min). Short-prep dishes
+// (sandwich, salad, bhel, maggi) don't trigger the ping — no point
+// telling Rakhi "Maggi, 10 min".
+exports.rakhiLunchPrepNudge = functions.pubsub
+  .schedule('30 11 * * *')
   .timeZone('Asia/Kolkata')
   .onRun(async () => {
     const userId = 'rakhi';
@@ -718,36 +938,129 @@ exports.mealPrepReminder = functions.pubsub
         .doc(`users/${userId}/meal_plans/${todayKey}`)
         .get();
       if (!planSnap.exists) {
-        console.log(`[mealPrepReminder] no plan for ${todayKey}`);
+        console.log(`[rakhiLunchPrepNudge] no plan for ${todayKey}`);
         return null;
       }
       const plan = planSnap.data() || {};
-      const parts = [];
-
-      const lunchDishId = plan.lunch?.dish_id;
-      const dinnerDishId = plan.dinner?.dish_id;
-      const [lunchName, dinnerName] = await Promise.all([
-        _resolveDishName(userId, lunchDishId),
-        _resolveDishName(userId, dinnerDishId),
-      ]);
-
-      if (lunchName) parts.push(`Lunch: ${lunchName}`);
-      if (dinnerName) parts.push(`Dinner: ${dinnerName}`);
-
-      if (parts.length === 0) {
-        console.log(`[mealPrepReminder] plan has no lunch/dinner for ${todayKey}`);
+      const lunchId = plan.lunch?.dish_id;
+      if (!lunchId) {
+        console.log(`[rakhiLunchPrepNudge] no lunch set for ${todayKey}`);
         return null;
       }
 
-      const body = `Today's plan — ${parts.join(' • ')}. Shall I prep the ingredient list?`;
-      await sendFCMToUser(userId, 'Jarvis — meal prep', body, {
-        type: 'meal_prep',
+      // If lunch and breakfast are the same dish she's probably eating
+      // leftovers — no prep needed.
+      if (plan.breakfast?.dish_id && plan.breakfast.dish_id === lunchId) {
+        console.log(`[rakhiLunchPrepNudge] lunch=breakfast for ${todayKey}, silent`);
+        return null;
+      }
+
+      const dish = await _resolveDishDetails(userId, lunchId);
+      if (!dish || !dish.name) {
+        console.log(`[rakhiLunchPrepNudge] couldn't resolve dish ${lunchId}`);
+        return null;
+      }
+
+      // Don't ping for trivial dishes. Salad, sandwich, maggi, bhel —
+      // she knows how to handle those at 12:55.
+      if (dish.prep_minutes < 15) {
+        console.log(
+          `[rakhiLunchPrepNudge] ${dish.name} prep=${dish.prep_minutes}min, too quick to nudge`);
+        return null;
+      }
+
+      // Pick the first 3 "interesting" ingredients — drop the staples
+      // everyone always has so the preview feels informative. (salt,
+      // pepper, oil etc.)
+      const boring = new Set([
+        'salt', 'tel (oil)', 'tel', 'pepper', 'haldi (turmeric)',
+        'jeera (cumin)', 'dhaniya (coriander)',
+      ]);
+      const interesting = dish.ingredients
+        .filter(i => !boring.has(i.toLowerCase()))
+        .slice(0, 3);
+
+      const ingPreview = interesting.length > 0
+        ? ` Ingredients: ${interesting.join(', ')}…`
+        : '';
+      const body =
+        `${dish.name} — ${dish.prep_minutes} min prep.${ingPreview}`;
+
+      await sendFCMToUser(userId, 'Lunch in 90 min ⏰', body, {
+        type: 'lunch_prep',
         date: todayKey,
-        click_url: '/#/meals',
+        click_url: '/',
       });
-      console.log(`[mealPrepReminder] sent for ${todayKey}: ${body}`);
+      console.log(`[rakhiLunchPrepNudge] sent for ${todayKey}: ${body}`);
     } catch (e) {
-      console.error('[mealPrepReminder] failed', e);
+      console.error('[rakhiLunchPrepNudge] failed', e);
+    }
+    return null;
+  });
+
+// ─── FUNCTION: Rakhi evening brief 5:30pm IST ───────────────────────────────
+// Names tonight's dinner + tomorrow's lunch (so she can plan shopping
+// after putting the toddler to bed) + any still-pending tasks from today.
+// Silent if nothing to say — no plan tonight, no plan tomorrow, no tasks.
+exports.rakhiEveningBrief = functions.pubsub
+  .schedule('30 17 * * *')
+  .timeZone('Asia/Kolkata')
+  .onRun(async () => {
+    const userId = 'rakhi';
+    const todayKey = _istDateKey();
+    const tomorrowKey = _istDateKey(
+      new Date(Date.now() + 24 * 60 * 60 * 1000));
+    try {
+      const [todaySnap, tomorrowSnap, pendingTasks] = await Promise.all([
+        db.doc(`users/${userId}/meal_plans/${todayKey}`).get(),
+        db.doc(`users/${userId}/meal_plans/${tomorrowKey}`).get(),
+        _rakhiTodayPendingTasks(todayKey),
+      ]);
+
+      const today = todaySnap.exists ? (todaySnap.data() || {}) : {};
+      const tomorrow = tomorrowSnap.exists ? (tomorrowSnap.data() || {}) : {};
+
+      const [dinnerName, tomorrowLunchName] = await Promise.all([
+        _resolveDishName(userId, today.dinner?.dish_id),
+        _resolveDishName(userId, tomorrow.lunch?.dish_id),
+      ]);
+
+      const hasDinner = !!dinnerName;
+      const hasTomorrowLunch = !!tomorrowLunchName;
+      const hasTasks = pendingTasks.length > 0;
+      const firstTaskTitle = hasTasks ? (pendingTasks[0].title || '').trim() : '';
+
+      if (!hasDinner && !hasTomorrowLunch && !hasTasks) {
+        console.log(`[rakhiEveningBrief] silent on ${todayKey} — nothing to say`);
+        return null;
+      }
+
+      let body;
+      if (hasDinner && hasTomorrowLunch && !hasTasks) {
+        body =
+          `${dinnerName} for tonight. Tomorrow's lunch: ${tomorrowLunchName}.`;
+      } else if (hasDinner && hasTasks) {
+        body = `${dinnerName} for tonight. Still to do` +
+          (firstTaskTitle ? `: ${firstTaskTitle}.` : '.');
+      } else if (hasDinner && !hasTomorrowLunch) {
+        body = `${dinnerName} tonight 🍽️ — want to plan tomorrow's lunch?`;
+      } else if (!hasDinner && hasTomorrowLunch) {
+        body =
+          `Dinner's open tonight — ask me for ideas. Tomorrow's lunch: ${tomorrowLunchName}.`;
+      } else {
+        // Only tasks pending, no meal data.
+        const n = pendingTasks.length;
+        body = `Evening check — ${n} task${n !== 1 ? 's' : ''} still open today.`;
+      }
+
+      await sendFCMToUser(userId, 'Evening ✨', body, {
+        type: 'evening_brief',
+        date: todayKey,
+        click_url: '/',
+      });
+      console.log(`[rakhiEveningBrief] sent for ${todayKey}: ${body}`);
+    } catch (e) {
+      console.error('[rakhiEveningBrief] failed', e);
     }
     return null;
   });

@@ -1747,6 +1747,46 @@ exports.reopenBug = functions
     }
   });
 
+// POST /sendTestPush?userId=rakhi   (header X-Ingest-Secret)
+// Fires a test FCM notification to whoever's registered tokens exist on
+// users/{userId}/device_tokens (primary for Android, web for the PWA).
+// Used by the chat UI's "long-press JARVIS" debug affordance to confirm
+// that push registration actually worked end-to-end.
+exports.sendTestPush = functions
+  .runWith({ invoker: 'public', timeoutSeconds: 30 })
+  .https.onRequest(async (req, res) => {
+    _applyAiCors(res);
+    if (req.method === 'OPTIONS') return res.status(204).send('');
+    if (!_checkAiSecret(req, res)) return;
+    const userId = (req.query.userId || req.body?.userId || '').toString();
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    try {
+      await sendFCMToUser(
+        userId,
+        'Jarvis',
+        'Test push — notifications are working.',
+        { type: 'test_push', click_url: '/' },
+      );
+      // Report what we found so the caller can debug "nothing arrived"
+      // without digging into Firestore directly.
+      const tokensRef = db.collection(`users/${userId}/device_tokens`);
+      const [primary, web] = await Promise.all([
+        tokensRef.doc('primary').get(),
+        tokensRef.doc('web').get(),
+      ]);
+      res.json({
+        ok: true,
+        sent_to: {
+          primary: primary.exists,
+          web: web.exists,
+        },
+      });
+    } catch (e) {
+      console.error('[sendTestPush] failed', e);
+      res.status(500).json({ error: e.message || String(e) });
+    }
+  });
+
 // ─── AI PROXY FUNCTIONS (Rakhi's web PWA only) ──────────────────────────────
 //
 // Why these exist: Flutter Web bundles env.json straight into the JS. If the

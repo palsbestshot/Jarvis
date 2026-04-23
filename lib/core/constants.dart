@@ -103,6 +103,10 @@ class AppConstants {
   static const String aiChatUrl = '$_functionsBase/aiChat';
   static const String aiTranscribeUrl = '$_functionsBase/aiTranscribe';
   static const String aiTtsUrl = '$_functionsBase/aiTTS';
+
+  /// Test endpoint that fires an FCM push to the caller's user. Used by
+  /// the home-screen logo long-press to verify push-token registration.
+  static const String testPushUrl = '$_functionsBase/sendTestPush';
   
   // App version
   static const String appVersion = '1.0.0';

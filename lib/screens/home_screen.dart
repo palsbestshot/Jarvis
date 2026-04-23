@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:home_widget/home_widget.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/constants.dart';
 import '../core/theme.dart';
 import '../widgets/jarvis_logo.dart';
 import '../widgets/user_avatar.dart';
@@ -195,6 +199,75 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
+  /// Debug affordance: long-press the JARVIS wordmark to fire a test
+  /// notification. Android uses flutter_local_notifications directly
+  /// (instant + 2 min scheduled). Web hits the sendTestPush Cloud
+  /// Function, which reads the user's device_tokens/web doc and
+  /// bounces a real FCM push — the round-trip Rakhi actually needs to
+  /// verify from her phone.
+  Future<void> _onLogoLongPress(UserProfile? user) async {
+    if (kIsWeb) {
+      if (user == null) return;
+      try {
+        final resp = await http.post(
+          Uri.parse(AppConstants.testPushUrl),
+          headers: {
+            'content-type': 'application/json',
+            'x-ingest-secret': AppConstants.ingestSecret,
+          },
+          body: jsonEncode({'userId': user.id}),
+        );
+        String label;
+        if (resp.statusCode == 200) {
+          final json = jsonDecode(resp.body) as Map<String, dynamic>;
+          final sent = json['sent_to'] as Map<String, dynamic>?;
+          final hasWeb = sent?['web'] == true;
+          final hasPrimary = sent?['primary'] == true;
+          if (hasWeb || hasPrimary) {
+            label =
+                'Test push sent (${hasWeb ? 'web' : ''}${hasWeb && hasPrimary ? ' + ' : ''}${hasPrimary ? 'android' : ''}).';
+          } else {
+            label =
+                'No device tokens registered yet. Grant notification '
+                'permission first by opening chat.';
+          }
+        } else {
+          label = 'Test push failed: ${resp.statusCode}';
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(label),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Test push error: $e'),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+      return;
+    }
+
+    // Android: keep the existing instant + 2-min scheduled test.
+    await _notificationService.showTestNotification();
+    await _notificationService.scheduleTestNotification(minutesFromNow: 2);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Test: instant + 2 min scheduled notification sent'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   void _onRoseModeChanged() {
     if (mounted) setState(() {});
   }
@@ -260,19 +333,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 GestureDetector(
-                  onLongPress: () async {
-                    // Test notification: instant + scheduled 2 min
-                    await _notificationService.showTestNotification();
-                    await _notificationService.scheduleTestNotification(minutesFromNow: 2);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Test: instant + 2 min scheduled notification sent'),
-                          duration: Duration(seconds: 3),
-                        ),
-                      );
-                    }
-                  },
+                  onLongPress: () => _onLogoLongPress(user),
                   child: const JarvisLogo(fontSize: 20),
                 ),
                 if (user != null)

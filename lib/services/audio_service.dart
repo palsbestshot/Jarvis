@@ -4,22 +4,27 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:audioplayers/audioplayers.dart' as audio_players;
+import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// Voice capture + playback.
+///
+/// Android uses flutter_sound + a path_provider temp-dir round-trip
+/// (Codec.aacMP4 → file on disk → POST to Whisper). Byte-identical to
+/// pre-web behaviour.
+///
+/// Web (Rakhi's PWA) uses flutter_sound_web under the hood, which wraps
+/// the browser MediaRecorder API. `toFile:` on web is interpreted as a
+/// blob-URL name — after stopRecorder() it returns a `blob:…` URL we
+/// fetch via http.get to pull the recorded bytes out. Those bytes go
+/// straight to the aiTranscribe Function; no provider key in the browser.
 class AudioService {
-  // Voice capture on Flutter Web can't use path_provider's temp dir — it
-  // doesn't exist in the browser. Phase 5 (Whisper proxy) will wire up
-  // MediaRecorder bytes → `POST /aiTranscribe`. Until then, these methods
-  // throw on web so the chat UI can hide the mic on kIsWeb and nothing
-  // calls into a half-wired recorder.
-  static const _webVoiceError =
-      'Voice recording on web is not wired yet. Use text input.';
-
   // Recording
   FlutterSoundRecorder? _recorder;
   bool isRecording = false;
   String? _currentRecordingPath;
+  Uint8List? _webLastRecordingBytes;
 
   // Playback
   final audio_players.AudioPlayer _player = audio_players.AudioPlayer();
@@ -27,22 +32,25 @@ class AudioService {
 
   // Initialization
   Future<void> initRecorder() async {
-    if (kIsWeb) {
-      throw UnsupportedError(_webVoiceError);
-    }
     try {
-      // Request microphone permission
-      final status = await Permission.microphone.request();
-      if (!status.isGranted) {
-        throw Exception('Microphone permission denied');
+      // Microphone permission.
+      // permission_handler on web doesn't actually work — the browser's
+      // own permission prompt fires the first time getUserMedia is called
+      // via MediaRecorder, which flutter_sound does internally. So skip
+      // Permission.microphone on web; rely on the browser prompt.
+      if (!kIsWeb) {
+        final status = await Permission.microphone.request();
+        if (!status.isGranted) {
+          throw Exception('Microphone permission denied');
+        }
       }
 
       // Initialize recorder
       _recorder = FlutterSoundRecorder();
-      
+
       // Open audio session
       await _recorder!.openRecorder();
-      
+
       // Configure audio session for recording
       await _recorder!.setSubscriptionDuration(const Duration(milliseconds: 10));
     } catch (e) {
@@ -52,9 +60,6 @@ class AudioService {
 
   // Recording methods
   Future<void> startRecording() async {
-    if (kIsWeb) {
-      throw UnsupportedError(_webVoiceError);
-    }
     if (_recorder == null) {
       await initRecorder();
     }
@@ -71,18 +76,12 @@ class AudioService {
       isRecording = false;
     }
 
+    final codec = kIsWeb ? Codec.opusWebM : Codec.aacMP4;
+    final toFile = await _computeRecordingTarget();
+
     try {
-      // Get temp directory
-      final tempDir = await getTemporaryDirectory();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      _currentRecordingPath = '${tempDir.path}/jarvis_voice_$timestamp.m4a';
-
-      // Start recording
-      await _recorder!.startRecorder(
-        toFile: _currentRecordingPath,
-        codec: Codec.aacMP4,
-      );
-
+      await _recorder!.startRecorder(toFile: toFile, codec: codec);
+      _currentRecordingPath = toFile;
       isRecording = true;
     } catch (e) {
       // If flutter_sound reports an already-running recorder despite
@@ -95,13 +94,9 @@ class AudioService {
         } catch (_) {/* ignore */}
         _recorder = null;
         await initRecorder();
-        final tempDir = await getTemporaryDirectory();
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        _currentRecordingPath = '${tempDir.path}/jarvis_voice_$timestamp.m4a';
-        await _recorder!.startRecorder(
-          toFile: _currentRecordingPath,
-          codec: Codec.aacMP4,
-        );
+        final retryTarget = await _computeRecordingTarget();
+        await _recorder!.startRecorder(toFile: retryTarget, codec: codec);
+        _currentRecordingPath = retryTarget;
         isRecording = true;
         return;
       }
@@ -109,15 +104,58 @@ class AudioService {
     }
   }
 
+  /// Build the `toFile:` value for startRecorder. On Android this is a
+  /// real path under getTemporaryDirectory(); on web it's just a name
+  /// flutter_sound_web uses as the blob-URL handle — no filesystem.
+  Future<String> _computeRecordingTarget() async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    if (kIsWeb) {
+      return 'jarvis_voice_$timestamp.webm';
+    }
+    final tempDir = await getTemporaryDirectory();
+    return '${tempDir.path}/jarvis_voice_$timestamp.m4a';
+  }
+
+  /// Stop recording and return a handle for downstream transcription.
+  ///
+  /// Android: returns the file path (as before — chat_provider's
+  /// sendVoiceMessage reads the file and POSTs it to Whisper).
+  ///
+  /// Web: returns the blob URL flutter_sound produced. The caller
+  /// (chat_provider on web) fetches those bytes via [fetchLastRecordedBytes]
+  /// and hands them to openai_service.transcribeAudioBytes which routes
+  /// through the aiTranscribe proxy. We also cache the bytes in
+  /// [_webLastRecordingBytes] so repeated access doesn't hit the blob
+  /// URL twice.
   Future<String?> stopRecording() async {
-    if (kIsWeb) return null;
     if (_recorder == null || !isRecording) {
       return null;
     }
 
     try {
-      await _recorder!.stopRecorder();
+      final stopResult = await _recorder!.stopRecorder();
       isRecording = false;
+      if (kIsWeb) {
+        // On web, stopRecorder returns the blob URL (string). Fetch
+        // immediately so the caller doesn't need to worry about URL
+        // lifetime / object revocation timing.
+        final blobUrl = stopResult ?? _currentRecordingPath;
+        _webLastRecordingBytes = null;
+        if (blobUrl != null && blobUrl.isNotEmpty) {
+          try {
+            final resp = await http.get(Uri.parse(blobUrl));
+            if (resp.statusCode == 200) {
+              _webLastRecordingBytes = resp.bodyBytes;
+            }
+          } catch (e) {
+            // ignore: avoid_print
+            print('DEBUG Web blob fetch failed: $e');
+          }
+        }
+        final path = blobUrl;
+        _currentRecordingPath = null;
+        return path;
+      }
       final path = _currentRecordingPath;
       _currentRecordingPath = null;
       return path;
@@ -125,6 +163,11 @@ class AudioService {
       throw Exception('Failed to stop recording: $e');
     }
   }
+
+  /// Web-only: returns the bytes of the most recent recording. Null on
+  /// native (where a file path is used instead) and null if the blob
+  /// fetch in stopRecording() failed.
+  Uint8List? get lastRecordedBytes => _webLastRecordingBytes;
 
   Future<void> disposeRecorder() async {
     try {
@@ -145,8 +188,8 @@ class AudioService {
     try {
       if (kIsWeb) {
         // Browser: no filesystem — feed the mp3 bytes directly to
-        // audioplayers via BytesSource. This is the same route TTS
-        // playback will take once the web Whisper/TTS proxy is live.
+        // audioplayers via BytesSource. Same route TTS playback takes
+        // on web now that the aiTTS proxy is live.
         _player.onPlayerStateChanged.listen((state) {
           if (state == audio_players.PlayerState.completed) {
             isPlaying = false;

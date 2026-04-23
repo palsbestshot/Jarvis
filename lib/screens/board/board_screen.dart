@@ -39,7 +39,14 @@ class BoardScreen extends ConsumerStatefulWidget {
 class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAliveClientMixin {
   final FirestoreService _firestoreService = FirestoreService();
   int _selectedSectionIndex = 0;
-  late List<String> _userSections = [];
+  // Sections are derived from the active user at render time instead of
+  // cached in initState. The old initState-only path had a race on the
+  // Flutter Web PWA: splash_screen's kIsWeb auto-login sets Rakhi async,
+  // and BoardScreen's initState sometimes fired with a null user, so
+  // _userSections stayed empty and the whole board rendered blank until
+  // manual reload. Reading from ref.watch(activeUserProvider) on every
+  // build keeps us in sync with auth state.
+  List<String> _userSections = [];
   bool _isSectionMenuOpen = false;
   bool _isSelectionMode = false;
   Set<String> _selectedTaskIds = {};
@@ -74,6 +81,10 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
     super.dispose();
   }
 
+  /// Pulls the section list from the active user and syncs local state.
+  /// Called from initState (for the first render on Android where auth
+  /// loads synchronously) and again from build() on web if the race
+  /// described above left _userSections empty.
   void _loadUserSections() {
     final user = ref.read(activeUserProvider);
     if (user != null) {
@@ -81,6 +92,15 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
         _userSections = user.boardSections;
       });
     }
+  }
+
+  /// Cheap string-list equality for the race-repair check in build().
+  static bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Widget _buildGreetingSection(UserProfile user) {
@@ -2957,6 +2977,16 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
           child: Text('Please login first'),
         ),
       );
+    }
+
+    // Fix for the web-blank-board race: if auth resolved after initState
+    // ran, pull the section list in now. Cheap list equality — bails if
+    // we already have the right sections, so normal rebuilds don't loop.
+    if (_userSections.length != user.boardSections.length ||
+        !_listEquals(_userSections, user.boardSections)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadUserSections();
+      });
     }
 
     return Scaffold(

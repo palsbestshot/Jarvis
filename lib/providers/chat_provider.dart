@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../core/time_categories.dart';
@@ -249,10 +250,25 @@ class ChatNotifier extends Notifier<ChatState> {
       final openAIService = ref.read(openAIServiceProvider);
       final audioService = ref.read(audioServiceProvider);
 
-      // 1. Transcribe audio using Whisper
+      // 1. Transcribe audio using Whisper. Android has a real file path;
+      // web has a blob URL plus cached bytes in audioService — route
+      // each to the right transcribe method. Both ultimately land at
+      // Whisper (direct on native, through the aiTranscribe Function
+      // proxy on web).
       String transcript;
       try {
-        transcript = await openAIService.transcribeAudio(filePath);
+        if (kIsWeb) {
+          final bytes = audioService.lastRecordedBytes;
+          if (bytes == null || bytes.isEmpty) {
+            throw Exception('No audio bytes captured — microphone blocked?');
+          }
+          transcript = await openAIService.transcribeAudioBytes(
+            bytes,
+            mimeType: 'audio/webm',
+          );
+        } else {
+          transcript = await openAIService.transcribeAudio(filePath);
+        }
         print('DEBUG: Whisper transcript: $transcript');
       } catch (e) {
         print('DEBUG ERROR in sendVoiceMessage: $e');

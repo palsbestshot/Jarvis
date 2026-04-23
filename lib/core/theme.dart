@@ -57,58 +57,67 @@ class JarvisTheme {
   static const Color rakhiAccent = Color(0xFFD47BA0);
 
   // ── Typography — getters so the colour follows the palette ─────────────
+  //
+  // Web font sizes are scaled up ~25% because iPhone Safari renders the
+  // PWA on a ~375pt viewport but the app was originally sized for a
+  // ~410dp Android phone, plus Rakhi asked for bigger, easier-to-read
+  // text. Android sizes unchanged.
+  static const double _webFontScale = 1.25;
+  static double _s(double base) =>
+      kIsWeb ? (base * _webFontScale).roundToDouble() : base;
+
   static TextStyle get displayLarge => TextStyle(
         fontFamily: 'InstrumentSerif',
-        fontSize: 32,
+        fontSize: _s(32),
         fontWeight: FontWeight.w400,
         color: textPrimary,
       );
 
   static TextStyle get displayMedium => TextStyle(
         fontFamily: 'InstrumentSerif',
-        fontSize: 24,
+        fontSize: _s(24),
         fontWeight: FontWeight.w400,
         color: textPrimary,
       );
 
   static TextStyle get headingLarge => TextStyle(
         fontFamily: 'DMSans',
-        fontSize: 20,
+        fontSize: _s(20),
         fontWeight: FontWeight.w600,
         color: textPrimary,
       );
 
   static TextStyle get headingMedium => TextStyle(
         fontFamily: 'DMSans',
-        fontSize: 17,
+        fontSize: _s(17),
         fontWeight: FontWeight.w600,
         color: textPrimary,
       );
 
   static TextStyle get bodyLarge => TextStyle(
         fontFamily: 'DMSans',
-        fontSize: 16,
+        fontSize: _s(16),
         fontWeight: FontWeight.w400,
         color: textPrimary,
       );
 
   static TextStyle get bodyMedium => TextStyle(
         fontFamily: 'DMSans',
-        fontSize: 14,
+        fontSize: _s(14),
         fontWeight: FontWeight.w400,
         color: textPrimary,
       );
 
   static TextStyle get bodySmall => TextStyle(
         fontFamily: 'DMSans',
-        fontSize: 12,
+        fontSize: _s(12),
         fontWeight: FontWeight.w400,
         color: textPrimary,
       );
 
   static TextStyle get labelMedium => TextStyle(
         fontFamily: 'DMSans',
-        fontSize: 13,
+        fontSize: _s(13),
         fontWeight: FontWeight.w500,
         letterSpacing: 0.5,
         color: textPrimary,
@@ -138,6 +147,13 @@ class JarvisTheme {
         bodySmall: bodySmall,
         labelMedium: labelMedium,
       );
+
+  /// Root-level text scale multiplier. Applied via MediaQuery.textScaler
+  /// at the MaterialApp root so even Material widgets that use their
+  /// own default fontSizes (Button, TextField label, Snackbar, etc.)
+  /// grow on web without us having to override each one. Also the
+  /// knob to tune should Rakhi still find text too small.
+  static double get rootTextScale => kIsWeb ? 1.15 : 1.0;
 
   static ThemeData get themeData {
     if (kIsWeb) {

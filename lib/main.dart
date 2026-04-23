@@ -68,8 +68,21 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'JARVIS v2',
       theme: JarvisTheme.themeData,
-      home: const SplashScreen(),
       debugShowCheckedModeBanner: false,
+      // On web (Rakhi's iPhone PWA) scale every text size up so it's
+      // comfortably legible on a 375pt Safari viewport. Android stays
+      // at 1.0. Wrap the whole app via builder so every screen's text,
+      // including Material-default widgets, picks up the scale.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: TextScaler.linear(JarvisTheme.rootTextScale),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      home: const SplashScreen(),
     );
   }
 }

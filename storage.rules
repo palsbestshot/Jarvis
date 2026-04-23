@@ -1,0 +1,18 @@
+rules_version = '2';
+
+// Firebase Storage rules — dev mode (matches firestore.rules permissive
+// posture today). Tighten to auth-based checks once the app ships to more
+// users. Storage is currently used for goal attachments only (e.g. the
+// HVAC roadmap .docx).
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Per-user goal attachments: users/{userId}/goals/{goalId}/{fileName}
+    match /users/{userId}/goals/{goalId}/{fileName} {
+      allow read, write: if true;
+    }
+    // Everything else: denied by default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

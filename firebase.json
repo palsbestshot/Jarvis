@@ -1,0 +1,32 @@
+{
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs22"
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "jarvis-78573",
+          "appId": "1:546240967899:android:4026359b29d78efcca48fe",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "jarvis-78573",
+          "configurations": {
+            "android": "1:546240967899:android:4026359b29d78efcca48fe"
+          }
+        }
+      }
+    }
+  }
+}

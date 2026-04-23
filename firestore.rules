@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if true; // open for now, secure in Phase 6
+    }
+    match /settings/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

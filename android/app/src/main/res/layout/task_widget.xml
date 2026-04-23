@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RemoteViews layout for the Jarvis home-screen widget. Clicks are set
+  purely via setOnClickPendingIntent in TaskWidgetProvider.kt — do NOT
+  use android:clickable / android:focusable attributes on any view here.
+  Those attributes interact badly with RemoteViews on Samsung / Xiaomi
+  launchers and can make the widget appear static (reported: "only
+  looks like image, not clickable").
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="10dp">
+
+    <!-- Left: progress circle with count inside. The whole container is
+         the click target — tap anywhere in this 60dp square to open the
+         app. Do not add clickable attributes to children; they'd steal
+         the click. -->
+    <FrameLayout
+        android:id="@+id/widget_ring_container"
+        android:layout_width="60dp"
+        android:layout_height="60dp">
+
+        <!-- Ring image — painted as a Bitmap by TaskWidgetProvider.
+             importantForAccessibility=no so the whole container is
+             announced as a single tap target. -->
+        <ImageView
+            android:id="@+id/widget_ring"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:contentDescription="@null" />
+
+        <!-- Count "2/14" overlay -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:importantForAccessibility="no">
+
+            <TextView
+                android:id="@+id/widget_count_done"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0"
+                android:textColor="#F5F0E8"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:includeFontPadding="false" />
+
+            <TextView
+                android:id="@+id/widget_count_total"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="of 0"
+                android:textColor="#A89880"
+                android:textSize="9sp"
+                android:includeFontPadding="false"
+                android:layout_marginTop="-2dp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Middle: tap-to-chat text bar. Tap opens chat with keyboard. -->
+    <TextView
+        android:id="@+id/widget_chat_bar"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_weight="1"
+        android:layout_marginStart="10dp"
+        android:layout_marginEnd="10dp"
+        android:background="@drawable/widget_bar_background"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:text="Ask Jarvis or add a task…"
+        android:textColor="#A89880"
+        android:textSize="13sp"
+        android:ellipsize="end"
+        android:maxLines="2" />
+
+    <!-- Right: mic icon — tap opens voice chat. -->
+    <ImageView
+        android:id="@+id/widget_mic_button"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:padding="10dp"
+        android:src="@drawable/ic_widget_mic"
+        android:background="@drawable/widget_mic_bg"
+        android:contentDescription="Start voice chat with Jarvis" />
+</LinearLayout>

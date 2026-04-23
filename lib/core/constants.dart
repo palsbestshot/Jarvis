@@ -1,0 +1,127 @@
+// App constants and configuration
+import 'dart:convert';
+import 'package:flutter/services.dart';
+
+class AppConstants {
+  // SharedPreferences keys
+  static const String activeUserKey = 'active_user';
+
+  // Firebase collection names
+  static const String usersCollection = 'users';
+  static const String tasksCollection = 'tasks';
+  static const String recurringTasksCollection = 'recurring_tasks';
+  static const String thoughtsCollection = 'thoughts';
+  static const String goalsCollection = 'goals';
+  static const String financeCollection = 'finance';
+  static const String mealsCollection = 'meals';
+  static const String chatHistoryCollection = 'chat_history';
+  static const String remindersCollection = 'reminders';
+
+  // Runtime-loaded env config
+  static Map<String, dynamic> _env = {};
+  static bool _loaded = false;
+
+  /// Call once at app startup (in main.dart)
+  static Future<void> loadEnv() async {
+    if (_loaded) return;
+    try {
+      final jsonStr = await rootBundle.loadString('env.json');
+      _env = jsonDecode(jsonStr) as Map<String, dynamic>;
+      _loaded = true;
+    } catch (e) {
+      print('Failed to load env.json: $e');
+    }
+  }
+
+  // API keys (loaded from bundled env.json at runtime)
+  static String get claudeApiKey => _env['CLAUDE_API_KEY'] ?? '';
+  static String get openaiApiKey => _env['OPENAI_API_KEY'] ?? '';
+  static String get tavilyApiKey => _env['TAVILY_API_KEY'] ?? '';
+
+  // AI Models
+  static const String claudeModel = 'claude-haiku-4-5-20251001';
+  static const String whisperModel = 'whisper-1';
+  static const String ttsModel = 'tts-1';
+  
+  // API endpoints
+  static const String claudeApiUrl = 'https://api.anthropic.com/v1/messages';
+  static const String openaiApiUrl = 'https://api.openai.com/v1';
+  
+  // App version
+  static const String appVersion = '1.0.0';
+  
+  // User IDs
+  static const String pallavUserId = 'pallav';
+  static const String rakhiUserId = 'rakhi';
+  
+  // Task categories
+  static const List<String> taskCategories = [
+    'HVAC Sales',
+    'Personal',
+    'Health',
+    'Finance',
+    'Travel',
+    'Study',
+    'Home',
+    'Internal',
+    'General',
+  ];
+  
+  // Thought categories
+  static const List<String> thoughtCategories = [
+    'Books',
+    'Finance',
+    'Personal',
+    'Work',
+    'Cooking',
+    'General',
+  ];
+  
+  // Finance categories (Pallav only)
+  static const List<String> financeCategories = [
+    'Gold',
+    'Stocks',
+    'MF',
+    'Savings',
+  ];
+  
+  // Meal types (Rakhi only)
+  static const List<String> mealTypes = [
+    'Breakfast',
+    'Lunch',
+    'Dinner',
+    'Snack',
+  ];
+  
+  // Days of week
+  static const List<String> daysOfWeek = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  
+  // Recurring frequencies
+  static const List<String> recurringFrequencies = [
+    'daily',
+    'weekly',
+    'monthly',
+  ];
+  
+  // Priority levels
+  static const List<String> priorityLevels = [
+    'low',
+    'medium',
+    'high',
+  ];
+  
+  // Goal statuses
+  static const List<String> goalStatuses = [
+    'active',
+    'paused',
+    'done',
+  ];
+}

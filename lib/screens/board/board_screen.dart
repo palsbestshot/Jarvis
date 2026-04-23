@@ -20,6 +20,7 @@ import '../../widgets/edit_habit_bottom_sheet.dart';
 import '../../widgets/add_thought_bottom_sheet.dart';
 import '../../widgets/motivation_ring.dart';
 import '../goals/roadmap_detail_screen.dart';
+import '../meals/meals_section.dart';
 import '../../core/people_directory.dart';
 import '../../widgets/call_followup_sheet.dart';
 import '../../services/home_widget_service.dart';
@@ -285,6 +286,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
       case 'Goals':
         return const Icon(Icons.flag_outlined, color: Colors.red, size: 18);
       case 'Meals':
+      case 'Meal Plans':
         return const Icon(Icons.restaurant_outlined, color: Colors.teal, size: 18);
       default:
         return const Icon(Icons.dashboard_outlined, color: Colors.grey, size: 18);
@@ -308,15 +310,17 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
       case 'Thoughts':
         return _buildThoughtsSection(user);
       case 'Finance':
-        return user.id == AppConstants.pallavUserId 
-            ? _buildFinanceSection(user)
-            : _buildEmptyState('Finance section is only available for Pallav');
+        // Finance section now available to both Pallav and Rakhi
+        // (each user has their own `users/{uid}/finance` subtree).
+        return _buildFinanceSection(user);
       case 'Goals':
         return _buildGoalsSection(user);
       case 'Meals':
+      case 'Meal Plans':
+        // Meal-planner is Rakhi-only (Pallav's apk doesn't ship the UI).
         return user.id == AppConstants.rakhiUserId
-            ? _buildMealsSection(user)
-            : _buildEmptyState('Meals section is only available for Rakhi');
+            ? MealsSection(user: user)
+            : _buildEmptyState('Meal plans are for Rakhi');
       default:
         return _buildEmptyState('Section coming soon');
     }
@@ -2804,9 +2808,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
     }
   }
 
-  Widget _buildMealsSection(UserProfile user) {
-    return _buildEmptyState('Meals section coming soon');
-  }
+  // _buildMealsSection removed — now delegated to MealsSection widget
+  // (see meals/meals_section.dart). The case in _buildSectionContent
+  // instantiates MealsSection(user: user) directly.
 
   Widget _buildFinanceEmptyState() {
     return Center(

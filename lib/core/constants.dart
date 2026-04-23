@@ -27,11 +27,15 @@ class AppConstants {
   //    env.web.json intentionally does NOT carry provider API keys —
   //    web builds call Claude/OpenAI through the Firebase Functions
   //    proxy (aiChat / aiTranscribe / aiTTS) so keys never touch the
-  //    browser. INGEST_SECRET authenticates those proxy calls.
+  //    browser. INGEST_SECRET authenticates those proxy calls;
+  //    VAPID_PUBLIC_KEY is the Firebase Cloud Messaging Web Push
+  //    certificate so the browser can request push tokens.
   //    Android builds ignore these entirely — loadEnv() reads env.json
   //    from the asset bundle like it always did.
   static const String _webIngestSecret =
       String.fromEnvironment('INGEST_SECRET', defaultValue: '');
+  static const String _webVapidPublicKey =
+      String.fromEnvironment('VAPID_PUBLIC_KEY', defaultValue: '');
 
   /// Call once at app startup (in main.dart).
   ///
@@ -50,6 +54,7 @@ class AppConstants {
         'OPENAI_API_KEY': '',
         'TAVILY_API_KEY': '',
         'INGEST_SECRET': _webIngestSecret,
+        'VAPID_PUBLIC_KEY': _webVapidPublicKey,
       };
       _loaded = true;
       return;
@@ -73,6 +78,11 @@ class AppConstants {
   /// On Android this is empty and unused — the native path hits
   /// api.anthropic.com / api.openai.com directly.
   static String get ingestSecret => _env['INGEST_SECRET'] ?? '';
+
+  /// Firebase Cloud Messaging Web Push public key (web build only).
+  /// On Android this is empty — FCM on Android uses google-services.json.
+  /// Generated in Firebase Console → Cloud Messaging → Web Push certs.
+  static String get vapidPublicKey => _env['VAPID_PUBLIC_KEY'] ?? '';
 
   // AI Models
   static const String claudeModel = 'claude-haiku-4-5-20251001';

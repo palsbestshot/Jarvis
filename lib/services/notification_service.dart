@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
+import '../core/constants.dart';
 
 class NotificationService {
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
@@ -102,18 +103,37 @@ class NotificationService {
 
     print('DEBUG Notification permission: ${settings.authorizationStatus}');
 
-    // Get FCM token
+    // Get FCM token. Native builds use the default projects FCM/google-
+    // services config; web builds must pass the VAPID public key so the
+    // browser can subscribe to Firebase push. The two tokens live in
+    // different Firestore docs (`primary` for Android, `web` for the
+    // PWA) so both platforms can coexist for the same user without
+    // overwriting each other.
     try {
-      final token = await FirebaseMessaging.instance.getToken();
+      final token = kIsWeb
+          ? await FirebaseMessaging.instance.getToken(
+              vapidKey: AppConstants.vapidPublicKey,
+            )
+          : await FirebaseMessaging.instance.getToken();
       if (token != null) {
+        final docId = kIsWeb ? 'web' : 'primary';
+        final platform = kIsWeb ? 'web' : 'android';
         await FirebaseFirestore.instance
-          .collection('users/$userId/device_tokens')
-          .doc('primary')
-          .set({
-            'fcm_token': token,
-            'updated_at': FieldValue.serverTimestamp(),
-            'platform': 'android',
-          });
+            .collection('users/$userId/device_tokens')
+            .doc(docId)
+            .set({
+              'fcm_token': token,
+              'updated_at': FieldValue.serverTimestamp(),
+              'platform': platform,
+            });
+      } else if (kIsWeb) {
+        // Most common cause: VAPID key not set, or user denied
+        // notification permission (Safari). Surface to console so
+        // devtools shows why the iPhone isn't getting pushes.
+        print(
+          'DEBUG Web FCM token null — check VAPID_PUBLIC_KEY in env.web.json '
+          'and notification permission grant',
+        );
       }
     } catch (e) {
       print('DEBUG FCM token save error: $e');
@@ -350,9 +370,31 @@ class NotificationService {
 
   Future<void> _saveFCMToken(String userId, [String? token]) async {
     try {
-      final fcmToken = token ?? await _firebaseMessaging.getToken();
+      final fcmToken = token ??
+          (kIsWeb
+              ? await _firebaseMessaging.getToken(
+                  vapidKey: AppConstants.vapidPublicKey,
+                )
+              : await _firebaseMessaging.getToken());
       if (fcmToken == null) return;
 
+      if (kIsWeb) {
+        // Web token goes into a dedicated `web` doc so Pallav's Android
+        // primary token in the same collection isn't overwritten if he
+        // ever previews Rakhi's PWA on his laptop.
+        await _firestore
+            .doc('users/$userId/device_tokens/web')
+            .set({
+              'fcm_token': fcmToken,
+              'updated_at': FieldValue.serverTimestamp(),
+              'platform': 'web',
+            });
+        return;
+      }
+
+      // Android legacy path — byte-identical to the previous behaviour:
+      // use the token string itself as the doc ID. sendFCMToUser picks
+      // the newest doc by updated_at, so stale entries never send.
       await _firestore
           .collection('users')
           .doc(userId)

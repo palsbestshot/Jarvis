@@ -17,10 +17,7 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -58,5 +55,30 @@ class DefaultFirebaseOptions {
     messagingSenderId: '546240967899',
     projectId: 'jarvis-78573',
     storageBucket: 'jarvis-78573.firebasestorage.app',
+  );
+
+  // Web (Flutter Web PWA for Rakhi — jarvis-78573.web.app).
+  //
+  // FIXME: `appId` must be filled in before the first web deploy.
+  //   1. Firebase Console → jarvis-78573 → Project settings → General
+  //      → "Your apps" → Add app → Web.
+  //   2. Register the app with a nickname (e.g. "Rakhi PWA"), copy
+  //      the `appId` value out of the generated firebaseConfig snippet.
+  //   3. Paste it below (replaces WEB_APP_ID).
+  //   4. In the same panel, grab the web `apiKey` — it's distinct from
+  //      the Android one — and paste into `apiKey` below.
+  //   5. Also copy the same config into web/firebase-messaging-sw.js.
+  //   6. Under Cloud Messaging → Web Push certificates, generate a
+  //      VAPID key pair and paste the PUBLIC key into env.web.json
+  //      as VAPID_PUBLIC_KEY.
+  //
+  // The Android block above is untouched by any web-app registration.
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyCKLv9Mr_YZ6f4CzBCPVgeoPaJ3RrEj5gQ', // FIXME replace with web apiKey
+    appId: '1:546240967899:web:WEB_APP_ID_PENDING_CONSOLE_REGISTRATION',
+    messagingSenderId: '546240967899',
+    projectId: 'jarvis-78573',
+    storageBucket: 'jarvis-78573.firebasestorage.app',
+    authDomain: 'jarvis-78573.firebaseapp.com',
   );
 }

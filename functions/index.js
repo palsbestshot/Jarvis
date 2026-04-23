@@ -79,22 +79,70 @@ const EMAIL_SIGNATURE_HTML = [
 ].join('<br>');
 
 // ─── HELPER: Send FCM to user ───────────────────────────────────────────────
+// Rakhi's iPhone PWA registers a token in `device_tokens/web`; Pallav's
+// Android APK registers in `device_tokens/primary`. Both can coexist for
+// the same user, and both should fire when present. We explicitly fetch
+// the two well-known docs instead of scanning the whole collection, so
+// any stale per-token docs left over from older versions don't cause
+// duplicate pushes for Pallav.
 async function sendFCMToUser(userId, title, body, data = {}) {
-  const tokensSnap = await db
-    .collection(`users/${userId}/device_tokens`)
-    .orderBy('updated_at', 'desc')
-    .limit(1)
-    .get();
+  const tokensRef = db.collection(`users/${userId}/device_tokens`);
+  const [primarySnap, webSnap] = await Promise.all([
+    tokensRef.doc('primary').get(),
+    tokensRef.doc('web').get(),
+  ]);
 
-  if (tokensSnap.empty) return;
-  const token = tokensSnap.docs[0].data().fcm_token;
+  const targets = [];
+  if (primarySnap.exists && primarySnap.data().fcm_token) {
+    targets.push({
+      platform: 'android',
+      token: primarySnap.data().fcm_token,
+      ref: primarySnap.ref,
+    });
+  }
+  if (webSnap.exists && webSnap.data().fcm_token) {
+    targets.push({
+      platform: 'web',
+      token: webSnap.data().fcm_token,
+      ref: webSnap.ref,
+    });
+  }
+  if (targets.length === 0) return;
 
-  await admin.messaging().send({
-    token,
-    notification: { title, body },
-    data: { ...data, click_action: 'FLUTTER_NOTIFICATION_CLICK' },
-    android: { priority: 'high' }
-  });
+  await Promise.all(targets.map(async (t) => {
+    const message = {
+      token: t.token,
+      notification: { title, body },
+      data: { ...data, click_action: 'FLUTTER_NOTIFICATION_CLICK' },
+    };
+    if (t.platform === 'web') {
+      // Web push needs a webpush config, not the android block.
+      // click_url is read by the service worker's notificationclick
+      // handler to open / focus the PWA at the right screen.
+      message.webpush = {
+        notification: {
+          icon: '/icons/Icon-192.png',
+          badge: '/icons/Icon-192.png',
+        },
+        fcmOptions: { link: data.click_url || '/' },
+      };
+    } else {
+      message.android = { priority: 'high' };
+    }
+    try {
+      await admin.messaging().send(message);
+    } catch (e) {
+      // Token no longer valid (uninstalled, browser cleared, etc.) —
+      // drop the doc so we stop hammering FCM with dead tokens. Any
+      // other failure is just logged; don't throw because the caller
+      // is usually a scheduled job and one send shouldn't block others.
+      if (e && e.code === 'messaging/registration-token-not-registered') {
+        await t.ref.delete().catch(() => {});
+      } else {
+        console.error(`[sendFCMToUser] ${userId} ${t.platform} send failed`, e);
+      }
+    }
+  }));
 }
 
 // ─── HELPER: Save pending message to Firestore ───────────────────────────────
@@ -616,7 +664,7 @@ exports.dinnerReminder = functions.pubsub
       .where('status', '==', 'pending')
       .where('due_date', '==', todayStr)
       .get();
-    
+
     let msg = 'Dinner time. ';
     if (pendingSnap.size > 0) {
       msg += `${pendingSnap.size} tasks still pending. Close them out after dinner.`;
@@ -626,6 +674,73 @@ exports.dinnerReminder = functions.pubsub
     await sendFCMToUser('pallav', 'JARVIS', msg, {type: 'nudge'});
     await sendFCMToUser('rakhi', 'JARVIS',
       'Dinner time! 🌙', {type: 'nudge'});
+    return null;
+  });
+
+// ─── FUNCTION: Rakhi meal-prep nudge 8am IST ────────────────────────────────
+// Rakhi-only. Reads today's meal_plans doc and whispers the planned lunch
+// + dinner ("Today's lunch: Dal Rice. Dinner: Roti + Paneer Bhurji.") so
+// she can start prep timing in her head. No-op when nothing is planned.
+function _istDateKey(date = new Date()) {
+  // IST = UTC+05:30 regardless of daylight saving (India doesn't observe).
+  const istMs = date.getTime() + 5.5 * 60 * 60 * 1000;
+  return new Date(istMs).toISOString().split('T')[0];
+}
+
+async function _resolveDishName(userId, dishId) {
+  if (!dishId) return null;
+  try {
+    const snap = await db.doc(`users/${userId}/dish_catalog/${dishId}`).get();
+    if (!snap.exists) return null;
+    return snap.data().name || null;
+  } catch (e) {
+    console.error('[_resolveDishName] failed', dishId, e.message || e);
+    return null;
+  }
+}
+
+exports.mealPrepReminder = functions.pubsub
+  .schedule('0 8 * * *')
+  .timeZone('Asia/Kolkata')
+  .onRun(async () => {
+    const userId = 'rakhi';
+    const todayKey = _istDateKey();
+    try {
+      const planSnap = await db
+        .doc(`users/${userId}/meal_plans/${todayKey}`)
+        .get();
+      if (!planSnap.exists) {
+        console.log(`[mealPrepReminder] no plan for ${todayKey}`);
+        return null;
+      }
+      const plan = planSnap.data() || {};
+      const parts = [];
+
+      const lunchDishId = plan.lunch?.dish_id;
+      const dinnerDishId = plan.dinner?.dish_id;
+      const [lunchName, dinnerName] = await Promise.all([
+        _resolveDishName(userId, lunchDishId),
+        _resolveDishName(userId, dinnerDishId),
+      ]);
+
+      if (lunchName) parts.push(`Lunch: ${lunchName}`);
+      if (dinnerName) parts.push(`Dinner: ${dinnerName}`);
+
+      if (parts.length === 0) {
+        console.log(`[mealPrepReminder] plan has no lunch/dinner for ${todayKey}`);
+        return null;
+      }
+
+      const body = `Today's plan — ${parts.join(' • ')}. Shall I prep the ingredient list?`;
+      await sendFCMToUser(userId, 'Jarvis — meal prep', body, {
+        type: 'meal_prep',
+        date: todayKey,
+        click_url: '/#/meals',
+      });
+      console.log(`[mealPrepReminder] sent for ${todayKey}: ${body}`);
+    } catch (e) {
+      console.error('[mealPrepReminder] failed', e);
+    }
     return null;
   });
 

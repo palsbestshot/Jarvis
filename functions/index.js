@@ -117,10 +117,18 @@ async function sendFCMToUser(userId, title, body, data = {}) {
     };
     if (t.platform === 'web') {
       // Web push needs a webpush config, not the android block.
+      // iOS Safari PWAs REQUIRE title + body inside webpush.notification
+      // — they don't fall back to the top-level notification block, so
+      // if we omit them here the push reaches the device but iOS
+      // silently drops the banner. Chrome tolerates either shape; iOS
+      // does not. Urgency: high asks APNs to deliver immediately.
       // click_url is read by the service worker's notificationclick
       // handler to open / focus the PWA at the right screen.
       message.webpush = {
+        headers: { Urgency: 'high' },
         notification: {
+          title,
+          body,
           icon: '/icons/Icon-192.png',
           badge: '/icons/Icon-192.png',
         },
@@ -1796,20 +1804,28 @@ exports.sendTestPush = functions
         result[key].error = 'doc exists but fcm_token field is empty';
         return;
       }
+      const title = 'Jarvis test push';
+      const body =
+        'If you see this on your home screen, push works end-to-end.';
       const message = {
         token,
-        notification: {
-          title: 'Jarvis test push',
-          body: 'If you see this on your home screen, push works end-to-end.',
-        },
+        notification: { title, body },
         data: {
           source: 'sendTestPush',
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
         },
       };
       if (platform === 'web') {
+        // iOS Safari PWAs require title + body in webpush.notification
+        // itself — it does NOT fall back to the top-level `notification`
+        // field the way Chrome/Android do. Without this the push reaches
+        // the device but iOS silently drops the banner. Urgency: high
+        // tells APNs to wake the device immediately.
         message.webpush = {
+          headers: { Urgency: 'high' },
           notification: {
+            title,
+            body,
             icon: '/icons/Icon-192.png',
             badge: '/icons/Icon-192.png',
           },

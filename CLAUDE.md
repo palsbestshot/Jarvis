@@ -87,6 +87,75 @@ Push notification lands on his phone's "App Tester" app in ~10s.
 available" when `versionCode` increments. If you re-ship the same version,
 Pallav has to manually uninstall/reinstall.
 
+## Rakhi PWA deploy (`rakhi-web` branch only)
+
+Web-build + deploy Rakhi's Jarvis PWA — lives at `https://jarvis-78573.web.app`:
+```powershell
+.\scripts\deploy-web.ps1                 # build + deploy to hosting + functions
+.\scripts\deploy-web.ps1 -BuildOnly      # build only, skip deploy
+.\scripts\deploy-web.ps1 -FunctionsOnly  # skip web build, deploy functions only
+```
+
+The script backs up `env.json`, replaces it with `{}` during the build so
+provider API keys don't end up in the browser bundle, runs
+`flutter build web --dart-define-from-file=env.web.json`, restores
+`env.json`, then runs `firebase deploy --only hosting,functions`.
+
+**One-time setup before the first successful deploy** (if not yet done):
+
+1. Firebase Console → `jarvis-78573` → Project settings → General → Your
+   apps → Add app → Web.
+   - Nickname: "Rakhi PWA".
+   - Copy the generated `apiKey` + `appId` into BOTH
+     `lib/firebase_options.dart` (the `web` block) AND
+     `web/firebase-messaging-sw.js` — they must match exactly.
+2. Firebase Console → Project settings → Cloud Messaging → Web Push
+   certificates → Generate key pair. Paste the public key into
+   `env.web.json` as `VAPID_PUBLIC_KEY`.
+3. `functions/.env` already has `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+   `INGEST_SECRET`. Don't commit that file (it's gitignored).
+
+**Regression test for Pallav's APK after any deploy that touches shared
+code** (`claude_service.dart`, `openai_service.dart`, `notification_service.
+dart`, `functions/index.js`):
+
+1. Re-ship the APK: `.\scripts\deploy-apk.ps1`.
+2. On his phone, open Chrome devtools → Network tab pointed at the APK
+   (via `chrome://inspect` + USB debugging). Trigger chat + voice +
+   TTS. Confirm the requests go to `api.anthropic.com` and
+   `api.openai.com` directly — **zero requests** to
+   `*.cloudfunctions.net/aiChat` or `/aiTranscribe` or `/aiTTS`.
+3. Confirm widget tap → tasks tab, chat bar voice/camera still work,
+   email triage still runs, bug reporting still writes to
+   `users/pallav/bugs`.
+
+**iPhone verification for Rakhi's side**:
+
+1. In Safari on her iPhone, open `https://jarvis-78573.web.app`.
+2. Share icon → "Add to Home Screen". Confirm the Jarvis icon appears.
+3. Launch from home screen — should be standalone, no Safari chrome.
+4. On first chat, grant mic + notification permissions if prompted.
+5. Open devtools on the deployed site (via Safari Remote Inspector on
+   macOS) and search the JS bundle for `sk-` — **should find nothing**.
+
+## Rakhi's context for AI replies
+
+Rakhi is a home chef + small-business entrepreneur, mother of a
+2-year-old, married to Pallav, living in India. Her Claude system prompt
+(`warm_companion` branch in `claude_service.dart`) already bakes this in,
+plus a COOKING + MEAL CONTEXT block that biases suggestions toward:
+- Indian home-style cooking (North + South + Indo-Chinese)
+- Healthy / low-oil variants
+- Toddler-friendly adaptations for lunch / dinner / brunch
+- 20–30 minute prep times
+- Seasonal / Ayurvedic cues when she asks
+
+She does NOT have access to email triage, Outlook drafts, time logging,
+or HVAC-category tools — those are Pallav-only via the tool-list gate
+in `_buildTools(userId)`. She has: create_task, create_recurring_task,
+save_thought, save_goal, save_finance, report_bug, and four meal tools
+(save_meal, query_dishes, suggest_dish_from_ingredients, plan_day_meals).
+
 ## Firebase Cloud Functions
 
 Project: `jarvis-78573` (Blaze plan). Region: `us-central1`.

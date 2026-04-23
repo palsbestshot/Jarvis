@@ -10,6 +10,15 @@ import './core/constants.dart';
 import './firebase_options.dart';
 import './screens/splash_screen.dart';
 
+/// Global scaffold messenger key so code paths outside a BuildContext
+/// (specifically the web FCM foreground handler registered in main())
+/// can show a SnackBar on whichever screen Rakhi happens to be on.
+/// iOS Safari suppresses the system notification banner when the PWA
+/// is in the foreground, so without this she'd see nothing when a push
+/// arrives while the app is open.
+final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+
 // Background message handler for Firebase Cloud Messaging
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -46,6 +55,50 @@ Future<void> main() async {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
+
+      // Web-only foreground push handler. iOS Safari DOES NOT display
+      // the system banner when the PWA is in the foreground — that's
+      // Apple platform behaviour, same as native iOS apps. So we
+      // listen for onMessage ourselves and show an in-app SnackBar via
+      // the global scaffold messenger key, regardless of which screen
+      // Rakhi is on. When the PWA is backgrounded the service worker
+      // at /firebase-messaging-sw.js handles the display instead.
+      FirebaseMessaging.onMessage.listen((RemoteMessage msg) {
+        final n = msg.notification;
+        final title = n?.title ?? 'Jarvis';
+        final body = n?.body ?? '';
+        final messenger = rootScaffoldMessengerKey.currentState;
+        if (messenger == null) return;
+        messenger.showSnackBar(SnackBar(
+          backgroundColor: JarvisTheme.rakhiAccent,
+          duration: const Duration(seconds: 6),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Icon(Icons.notifications_active,
+                    color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ]),
+              if (body.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(body,
+                    style: const TextStyle(color: Colors.white)),
+              ],
+            ],
+          ),
+        ));
+      });
     } else {
       await Firebase.initializeApp();
       // FCM background handler is Android-only; on web the service
@@ -69,6 +122,7 @@ class MyApp extends StatelessWidget {
       title: 'JARVIS v2',
       theme: JarvisTheme.themeData,
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       // On web (Rakhi's iPhone PWA) scale every text size up so it's
       // comfortably legible on a 375pt Safari viewport. Android stays
       // at 1.0. Wrap the whole app via builder so every screen's text,

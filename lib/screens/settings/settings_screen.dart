@@ -89,9 +89,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: JarvisTheme.sm),
           Text(
-            "Tap 'Send test notification' to verify pushes land on your "
-            "home screen. If nothing arrives, tap 'Re-register device' "
-            "to re-grant permission and refresh the FCM token.",
+            kIsWeb
+                ? "Tap Send — you'll see a pink banner appear INSIDE the app "
+                  "confirming the push arrived. iOS suppresses the system banner "
+                  "while the PWA is open. To test the real home-screen banner: "
+                  "tap Send, then IMMEDIATELY press the home button to minimize "
+                  "Jarvis. The banner arrives within 5 seconds."
+                : "Tap Send to verify pushes land on your home screen. If "
+                  "nothing arrives, tap Re-register device to refresh the token.",
             style: JarvisTheme.bodySmall
                 .copyWith(color: JarvisTheme.textSecondary),
           ),

@@ -81,9 +81,9 @@ class _DishPickerSheetState extends State<DishPickerSheet>
       expand: false,
       builder: (context, scrollController) {
         return Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: JarvisTheme.surface,
-            borderRadius: BorderRadius.vertical(
+            borderRadius: const BorderRadius.vertical(
               top: Radius.circular(JarvisTheme.large),
             ),
           ),
@@ -201,12 +201,12 @@ class _DishPickerSheetState extends State<DishPickerSheet>
       child: TextField(
         controller: _searchCtrl,
         onChanged: (v) => setState(() => _query = v),
-        style: const TextStyle(color: JarvisTheme.textPrimary),
+        style: TextStyle(color: JarvisTheme.textPrimary),
         decoration: InputDecoration(
           hintText: 'Search dishes, ingredients, tags…',
-          hintStyle: const TextStyle(color: JarvisTheme.textMuted),
+          hintStyle: TextStyle(color: JarvisTheme.textMuted),
           prefixIcon:
-              const Icon(Icons.search, color: JarvisTheme.textMuted),
+              Icon(Icons.search, color: JarvisTheme.textMuted),
           filled: true,
           fillColor: JarvisTheme.surface2,
           contentPadding:
@@ -240,7 +240,7 @@ class _DishPickerSheetState extends State<DishPickerSheet>
       controller: controller,
       padding: const EdgeInsets.symmetric(horizontal: JarvisTheme.md),
       itemCount: dishes.length,
-      separatorBuilder: (_, __) => const Divider(
+      separatorBuilder: (_, __) => Divider(
         height: 1,
         color: JarvisTheme.surface2,
       ),

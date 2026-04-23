@@ -38,15 +38,15 @@ class UserProfile {
     accentHex: '#D47BA0',
     ttsVoice: 'echo',
     personalityType: 'warm_companion',
-    // Sections she asked for (no Time / email — those are Pallav-only via
-    // the Claude tool gating in claude_service.dart):
-    //   Tasks | Habits | Thoughts | Finance | Goals | Meal Plans
+    // Sections she asked for (no Time / Goals / email — those are
+    // Pallav-only via the Claude tool gating in claude_service.dart
+    // and her own preference not to track multi-year HVAC goals):
+    //   Tasks | Habits | Thoughts | Finance | Meal Plans
     boardSections: [
       'Tasks',
       'Habits',
       'Thoughts',
       'Finance',
-      'Goals',
       'Meal Plans',
     ],
   );

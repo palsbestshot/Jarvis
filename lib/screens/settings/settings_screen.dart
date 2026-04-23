@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart' as fc;
 
+import '../../core/constants.dart';
 import '../../core/people_directory.dart';
 import '../../core/theme.dart';
 import '../../models/user_profile.dart';
@@ -32,46 +33,89 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: JarvisTheme.background,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: JarvisTheme.textPrimary),
+          icon: Icon(Icons.arrow_back, color: JarvisTheme.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text('Settings', style: JarvisTheme.headingMedium),
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: _svc.contactMapStream(widget.user.id),
-        builder: (ctx, snap) {
-          final map = <String, String>{};
-          if (snap.hasData) {
-            for (final doc in snap.data!.docs) {
-              map[doc.id] = (doc.data()['phone'] ?? '').toString();
-            }
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    // People -> Phone section is Pallav-only (Bosses + Subordinates are
+    // his HVAC org chart, baked into PeopleDirectory). Rakhi has no use
+    // for it and shouldn't see Pallav's team, so short-circuit her to
+    // a simple placeholder.
+    if (widget.user.id != AppConstants.pallavUserId) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(
+          JarvisTheme.md,
+          JarvisTheme.xl,
+          JarvisTheme.md,
+          JarvisTheme.xxl,
+        ),
+        children: [
+          Text(
+            'Profile',
+            style: JarvisTheme.headingMedium
+                .copyWith(color: widget.user.accentColor),
+          ),
+          const SizedBox(height: JarvisTheme.sm),
+          Text(
+            widget.user.name,
+            style: JarvisTheme.displayMedium,
+          ),
+          const SizedBox(height: JarvisTheme.xs),
+          Text(
+            'Signed in on this device',
+            style: JarvisTheme.bodySmall
+                .copyWith(color: JarvisTheme.textMuted),
+          ),
+          const SizedBox(height: JarvisTheme.lg),
+          Text(
+            'More settings coming soon.',
+            style: JarvisTheme.bodyMedium
+                .copyWith(color: JarvisTheme.textSecondary),
+          ),
+        ],
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _svc.contactMapStream(widget.user.id),
+      builder: (ctx, snap) {
+        final map = <String, String>{};
+        if (snap.hasData) {
+          for (final doc in snap.data!.docs) {
+            map[doc.id] = (doc.data()['phone'] ?? '').toString();
           }
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(
-              JarvisTheme.md,
-              JarvisTheme.sm,
-              JarvisTheme.md,
-              JarvisTheme.xxl,
+        }
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(
+            JarvisTheme.md,
+            JarvisTheme.sm,
+            JarvisTheme.md,
+            JarvisTheme.xxl,
+          ),
+          children: [
+            _sectionHeader('People → Phone'),
+            _sectionHelp(
+              'Map each person Jarvis knows to a phone from your address book. '
+              'Then the email task sheet shows a one-tap call icon when you '
+              'need to reach them.',
             ),
-            children: [
-              _sectionHeader('People → Phone'),
-              _sectionHelp(
-                'Map each person Jarvis knows to a phone from your address book. '
-                'Then the email task sheet shows a one-tap call icon when you '
-                'need to reach them.',
-              ),
-              const SizedBox(height: JarvisTheme.sm),
-              _subHeader('Bosses'),
-              for (final p in PeopleDirectory.bosses)
-                _buildPersonTile(p, map[p.key]),
-              const SizedBox(height: JarvisTheme.md),
-              _subHeader('Team (Subordinates)'),
-              for (final p in PeopleDirectory.subordinates)
-                _buildPersonTile(p, map[p.key]),
-            ],
-          );
-        },
-      ),
+            const SizedBox(height: JarvisTheme.sm),
+            _subHeader('Bosses'),
+            for (final p in PeopleDirectory.bosses)
+              _buildPersonTile(p, map[p.key]),
+            const SizedBox(height: JarvisTheme.md),
+            _subHeader('Team (Subordinates)'),
+            for (final p in PeopleDirectory.subordinates)
+              _buildPersonTile(p, map[p.key]),
+          ],
+        );
+      },
     );
   }
 

@@ -45,7 +45,7 @@ class _RoadmapDetailScreenState extends State<RoadmapDetailScreen> {
         backgroundColor: JarvisTheme.background,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: JarvisTheme.textPrimary),
+          icon: Icon(Icons.arrow_back, color: JarvisTheme.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(

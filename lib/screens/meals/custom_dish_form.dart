@@ -114,8 +114,8 @@ class _CustomDishFormState extends State<CustomDishForm> {
       appBar: AppBar(
         backgroundColor: JarvisTheme.background,
         elevation: 0,
-        title: const Text('New dish', style: JarvisTheme.headingMedium),
-        iconTheme: const IconThemeData(color: JarvisTheme.textPrimary),
+        title: Text('New dish', style: JarvisTheme.headingMedium),
+        iconTheme: IconThemeData(color: JarvisTheme.textPrimary),
         actions: [
           TextButton(
             onPressed: _saving ? null : _save,
@@ -133,7 +133,7 @@ class _CustomDishFormState extends State<CustomDishForm> {
           _field(_hindiCtrl, 'Hindi name (optional)',
               hint: 'e.g. मटर पनीर'),
           const SizedBox(height: JarvisTheme.md),
-          const Text('Meal slots', style: JarvisTheme.bodySmall),
+          Text('Meal slots', style: JarvisTheme.bodySmall),
           const SizedBox(height: JarvisTheme.xs),
           Wrap(
             spacing: JarvisTheme.xs,
@@ -201,10 +201,10 @@ class _CustomDishFormState extends State<CustomDishForm> {
             controller: ctrl,
             maxLines: maxLines,
             keyboardType: keyboardType,
-            style: const TextStyle(color: JarvisTheme.textPrimary),
+            style: TextStyle(color: JarvisTheme.textPrimary),
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: const TextStyle(color: JarvisTheme.textMuted),
+              hintStyle: TextStyle(color: JarvisTheme.textMuted),
               filled: true,
               fillColor: JarvisTheme.surface2,
               contentPadding:

@@ -99,7 +99,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
                 children: [
                   Text(
                     '$greeting, ${user.name}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'InstrumentSerif',
                       fontSize: 24,
                       color: JarvisTheme.textPrimary,
@@ -2951,9 +2951,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
     final user = ref.watch(activeUserProvider);
 
     if (user == null) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: JarvisTheme.background,
-        body: Center(
+        body: const Center(
           child: Text('Please login first'),
         ),
       );

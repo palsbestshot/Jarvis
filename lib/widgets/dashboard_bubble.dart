@@ -51,7 +51,7 @@ class DashboardBubble extends StatelessWidget {
           // Quote
           Text(
             '"$quote"',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'InstrumentSerif',
               fontSize: 16,
               fontStyle: FontStyle.italic,

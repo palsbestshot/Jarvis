@@ -327,7 +327,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       SnackBar(
         content: Text(
           message,
-          style: const TextStyle(color: JarvisTheme.textPrimary),
+          style: TextStyle(color: JarvisTheme.textPrimary),
         ),
         backgroundColor: JarvisTheme.surface2,
         behavior: SnackBarBehavior.floating,
@@ -1373,12 +1373,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.camera_alt, color: JarvisTheme.textPrimary),
+              leading: Icon(Icons.camera_alt, color: JarvisTheme.textPrimary),
               title: Text('Camera', style: JarvisTheme.bodyMedium.copyWith(color: JarvisTheme.textPrimary)),
               onTap: () => Navigator.pop(context, ImageSource.camera),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library, color: JarvisTheme.textPrimary),
+              leading: Icon(Icons.photo_library, color: JarvisTheme.textPrimary),
               title: Text('Gallery', style: JarvisTheme.bodyMedium.copyWith(color: JarvisTheme.textPrimary)),
               onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
@@ -1529,9 +1529,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     final agentState = user != null ? ref.watch(agentNotifierProvider(user)) : null;
 
     if (user == null) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: JarvisTheme.background,
-        body: Center(
+        body: const Center(
           child: Text('Please login first'),
         ),
       );

@@ -79,3 +79,4 @@ functions/lib/
 
 # Claude Code session state + plans
 .claude/
+.firebase/

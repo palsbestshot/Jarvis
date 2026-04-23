@@ -77,7 +77,7 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
         backgroundColor: JarvisTheme.background,
         elevation: 0,
         title: Text(dayLabel, style: JarvisTheme.headingMedium),
-        iconTheme: const IconThemeData(color: JarvisTheme.textPrimary),
+        iconTheme: IconThemeData(color: JarvisTheme.textPrimary),
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: _firestore.mealPlanDayStream(widget.user.id, _dateKey),
@@ -130,7 +130,7 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
         label: Text('Add ${slot.label.toLowerCase()}'),
         style: OutlinedButton.styleFrom(
           foregroundColor: JarvisTheme.textSecondary,
-          side: const BorderSide(color: JarvisTheme.surface2, width: 1),
+          side: BorderSide(color: JarvisTheme.surface2, width: 1),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(JarvisTheme.small),
           ),
@@ -248,7 +248,7 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
               ),
             ),
             PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, color: JarvisTheme.textMuted),
+              icon: Icon(Icons.more_vert, color: JarvisTheme.textMuted),
               color: JarvisTheme.surface2,
               onSelected: (action) async {
                 if (action == 'change') {
@@ -258,12 +258,12 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
                 }
               },
               itemBuilder: (_) => [
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'change',
                   child: Text('Change dish',
                       style: TextStyle(color: JarvisTheme.textPrimary)),
                 ),
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'clear',
                   child: Text('Clear',
                       style: TextStyle(color: JarvisTheme.textPrimary)),

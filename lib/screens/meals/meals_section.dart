@@ -109,10 +109,15 @@ class _MealsSectionState extends State<MealsSection> {
           }
         }
 
+        // Nothing planned in the visible month? Show a friendly hint at
+        // the top so the calendar doesn't just look like an empty grid.
+        final nothingPlanned = byDateKey.values.every((d) => !d.hasAnyPlanned);
+
         return Column(
           children: [
             _buildMonthHeader(),
             const SizedBox(height: JarvisTheme.sm),
+            if (nothingPlanned) _buildEmptyHint(),
             _buildWeekdayStrip(),
             const SizedBox(height: JarvisTheme.xs),
             Expanded(
@@ -121,6 +126,49 @@ class _MealsSectionState extends State<MealsSection> {
           ],
         );
       },
+    );
+  }
+
+  /// Hint shown above the calendar when nothing is planned in the visible
+  /// month. Tells Rakhi there are two ways in: tap a date, or ask Jarvis.
+  Widget _buildEmptyHint() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        JarvisTheme.md,
+        0,
+        JarvisTheme.md,
+        JarvisTheme.sm,
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(JarvisTheme.sm),
+        decoration: BoxDecoration(
+          color: JarvisTheme.surface2,
+          borderRadius: BorderRadius.circular(JarvisTheme.small),
+          border: Border.all(
+            color: widget.user.accentColor.withOpacity(0.35),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.restaurant_menu,
+              size: 18,
+              color: widget.user.accentColor,
+            ),
+            const SizedBox(width: JarvisTheme.sm),
+            Expanded(
+              child: Text(
+                'Tap any day to plan a meal, or ask Jarvis: '
+                '"plan tomorrow\'s meals, light dinner".',
+                style: JarvisTheme.bodySmall.copyWith(
+                  color: JarvisTheme.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

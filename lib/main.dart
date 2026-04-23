@@ -21,9 +21,10 @@ Future<void> main() async {
   // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Set up system UI
+  // Set up system UI. Colours pulled from JarvisTheme getters so the
+  // light-pink web palette and the dark Android palette both Just Work.
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
+    SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
       systemNavigationBarColor: JarvisTheme.background,

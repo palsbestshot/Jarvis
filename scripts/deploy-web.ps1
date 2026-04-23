@@ -87,6 +87,42 @@ try {
     if (-not (Test-Path (Join-Path $WebBuildDir 'index.html'))) {
         throw "build/web/index.html missing -- flutter build did not produce output."
     }
+
+    # -- 2a. Patch flutter_bootstrap.js to host Flutter inside
+    # #flutter-root instead of document.body ------------------------------
+    # Flutter's auto-generated bootstrap calls _flutter.loader.load({
+    #   serviceWorkerSettings: ... }) without a hostElement, so Flutter
+    # appends its <flutter-view> to document.body at position:fixed with
+    # full-viewport bounds. On iOS Safari PWA that causes a touch-offset
+    # bug: content visually masked by the notch / home-indicator, but
+    # the hit-test canvas still runs edge-to-edge.
+    #
+    # We patch the generated file to add
+    #   config: { hostElement: document.querySelector('#flutter-root') }
+    # so Flutter renders inside our wrapper div that's inset via
+    # env(safe-area-inset-*) CSS. Visual and tap coordinates then align.
+    #
+    # Idempotent: if already patched (re-run, cached build dir), skip.
+    Write-Step 'Patching flutter_bootstrap.js with hostElement=#flutter-root'
+    $bootstrapPath = Join-Path $WebBuildDir 'flutter_bootstrap.js'
+    if (-not (Test-Path $bootstrapPath)) {
+        throw "build/web/flutter_bootstrap.js missing -- can't inject hostElement config."
+    }
+    $bootstrap = Get-Content $bootstrapPath -Raw
+    if ($bootstrap.Contains("hostElement: document.querySelector('#flutter-root')")) {
+        Write-Host '  already patched, skipping' -ForegroundColor DarkGray
+    } else {
+        $needle = '_flutter.loader.load({'
+        $replacement = "_flutter.loader.load({`n  config: { hostElement: document.querySelector('#flutter-root') },"
+        if (-not $bootstrap.Contains($needle)) {
+            throw "Couldn't find '$needle' in flutter_bootstrap.js -- has Flutter's loader API changed? Check build/web/flutter_bootstrap.js and update this patch."
+        }
+        $patched = $bootstrap.Replace($needle, $replacement)
+        # UTF8 without BOM so the browser's parser doesn't see a stray
+        # byte-order-mark character at the top of the JS file.
+        [System.IO.File]::WriteAllText($bootstrapPath, $patched, (New-Object System.Text.UTF8Encoding $false))
+        Write-Host '  patched.' -ForegroundColor DarkGray
+    }
 } finally {
     # -- 3. Restore env.json NO MATTER WHAT ---------------------------------
     # This is the most important line in this script. If a build error

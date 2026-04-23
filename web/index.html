@@ -117,14 +117,38 @@
     }
 
     /*
-      CRITICAL: force Flutter's root element to live *inside* the
-      safe-area. Flutter Web ships this element as position:fixed
-      top:0 left:0 bottom:0 right:0 (full viewport), which causes the
-      hit-test offset Rakhi reported: visually masked by iOS system
-      UI but the canvas's internal y=0 is up at the top of the notch.
-      Setting top/bottom to safe-area-inset-* insets the canvas so
-      visual and tap coordinates align. Targets both the modern
-      (Flutter 3.22+) and legacy element names.
+      Wrapper div we tell Flutter to render *inside* via the hostElement
+      config. Positioned to the safe-area inset on every side so the
+      Flutter canvas is naturally constrained to the visible viewport.
+      Taps inside the canvas land on the visible widget; taps in the
+      safe-area strips fall through to our body pseudo-elements (which
+      are pointer-events:none and decorative).
+
+      IMPORTANT: this relies on scripts/deploy-web.ps1 patching
+      build/web/flutter_bootstrap.js after `flutter build web` to pass
+      config.hostElement to _flutter.loader.load(). Without that patch
+      Flutter falls back to document.body and the fallback CSS override
+      below (flutter-view/flt-glass-pane) kicks in. The ps1 patch is
+      more reliable because Flutter applies inline styles at runtime
+      that out-specificity the CSS rule, even with !important on every
+      declaration.
+    */
+    #flutter-root {
+      position: fixed;
+      top: env(safe-area-inset-top, 0px);
+      left: env(safe-area-inset-left, 0px);
+      right: env(safe-area-inset-right, 0px);
+      bottom: env(safe-area-inset-bottom, 0px);
+      overflow: hidden;
+    }
+
+    /*
+      Belt-and-braces fallback: if Flutter ignores hostElement (old
+      build, patch missed, renderer differs) and falls back to document
+      .body, override its flutter-view / flt-glass-pane children to
+      inset the same way. Less reliable than the hostElement route
+      (Flutter can re-apply inline styles at runtime) but better than
+      nothing.
     */
     flutter-view,
     flt-glass-pane {
@@ -140,13 +164,12 @@
 </head>
 <body>
   <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
+    The #flutter-root div is the hostElement Flutter will render inside.
+    Placed BEFORE the flutter_bootstrap.js script so that by the time
+    the loader runs, the element exists and the (patched) bootstrap
+    can query it.
   -->
+  <div id="flutter-root"></div>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

@@ -934,6 +934,26 @@ class FirestoreService {
             }).toList());
   }
 
+  /// One-shot version of [mealPlanRangeStream] — used by the
+  /// plan_month_meals tool handler to pre-check which days in the
+  /// target month already have any slot filled, so it can skip them
+  /// (unless the user explicitly asked to overwrite).
+  Future<List<Map<String, dynamic>>> getMealPlanRange(
+    String userId,
+    String fromDateKey,
+    String toDateKey,
+  ) async {
+    final snap = await _mealPlansRef(userId)
+        .where('date_key', isGreaterThanOrEqualTo: fromDateKey)
+        .where('date_key', isLessThanOrEqualTo: toDateKey)
+        .get();
+    return snap.docs.map((d) {
+      final m = d.data();
+      m['id'] = d.id;
+      return m;
+    }).toList();
+  }
+
   /// Set or clear a single meal slot. Pass null to clear. Uses merge
   /// writes so other slots in the same day doc are untouched.
   ///

@@ -171,6 +171,13 @@ Meals / meal plans (Rakhi only) — four coordinated tools:
   - plan_day_meals: "Plan tomorrow", "Fill Monday's lunch and dinner" —
     propose a multi-slot plan, handler writes everything when Rakhi
     confirms. Slots enum: breakfast | brunch | lunch | eve_snacks | dinner.
+  - plan_month_meals: "Plan all of May", "fill the whole month", "monthly
+    meal plan". You emit a 7-day weekly template (Mon..Sun, each with
+    breakfast/lunch/dinner by default) and the handler replicates it
+    across every matching weekday in the month. Default to NOT
+    overwriting days she's already planned. Ask for any preferences she
+    hasn't stated (veg/non-veg mix, toddler-friendly always, etc.)
+    BEFORE emitting the template — one clarifying question is fine.
 
 Time / visit logging → use log_time tool (Pallav only)
   - "log 2 hours client meeting", "spent 30 min emails", "worked on
@@ -773,6 +780,105 @@ ${formatThoughts(recentThoughts)}
           'required': ['plan'],
         },
       });
+
+      tools.add({
+        'name': 'plan_month_meals',
+        'description':
+            "Populate an entire month of meals in one shot. Use when "
+            "Rakhi says 'plan all of May', 'fill the whole month', "
+            "'monthly meal plan', 'plan next 30 days'. "
+            "You emit a WEEKLY template (one entry per weekday Mon..Sun) "
+            "and the handler replicates it across every matching weekday "
+            "in the target month. This keeps your response tight and "
+            "gives her a predictable weekly rhythm. "
+            "APPLY THESE DEFAULTS unless she says otherwise: "
+            "(1) Plan breakfast + lunch + dinner by default (skip brunch "
+            "and eve_snacks unless she asks). "
+            "(2) Indian home-style pan-Indian rotation — vary cuisine "
+            "across the week (one South Indian day, one Indo-Chinese, "
+            "one simple dal-chawal comfort day, etc.). "
+            "(3) Weekends can be slightly heavier / festive. Weekday "
+            "lunches should be 30-min cooks. "
+            "(4) Toddler-friendly for lunch/dinner/brunch slots — her "
+            "2-year-old eats the same meal. Prefer soft-texture / mild-"
+            "spice default versions. "
+            "(5) Don't repeat the same dish for breakfast on more than "
+            "2 weekdays; don't repeat dinner on consecutive days. "
+            "Return a concise `summary` line Rakhi can read ('Weekly "
+            "rhythm: Mon Poha / Dal Rice / Paneer Bhurji, Tue Upma / ...'). "
+            "Set `overwrite_existing` true only if she asks to replace "
+            "an existing plan — otherwise the handler skips days that "
+            "already have any slot planned.",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'month': {
+              'type': 'string',
+              'description':
+                  'Target month as YYYY-MM (e.g. "2026-05"). If she says '
+                  '"this month" use the current month; "next month" use '
+                  'the next calendar month.',
+            },
+            'constraints': {
+              'type': 'string',
+              'description':
+                  'Her guardrails - e.g. veg only, no onion-garlic on '
+                  'Tuesdays, use paneer twice a week, toddler-friendly '
+                  'always, etc.',
+            },
+            'overwrite_existing': {
+              'type': 'boolean',
+              'description':
+                  'If true, overwrite slots that are already planned. '
+                  'Default false — handler skips days already planned.',
+            },
+            'week_template': {
+              'type': 'array',
+              'description':
+                  'Exactly 7 entries, one per weekday Mon..Sun. Order '
+                  'matters — entry 0 is Monday, entry 6 is Sunday.',
+              'items': {
+                'type': 'object',
+                'properties': {
+                  'weekday': {
+                    'type': 'string',
+                    'enum': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                  },
+                  'slots': {
+                    'type': 'array',
+                    'items': {
+                      'type': 'object',
+                      'properties': {
+                        'slot': {
+                          'type': 'string',
+                          'enum': [
+                            'breakfast',
+                            'brunch',
+                            'lunch',
+                            'eve_snacks',
+                            'dinner',
+                          ],
+                        },
+                        'dish_name': {'type': 'string'},
+                        'notes': {'type': 'string'},
+                      },
+                      'required': ['slot', 'dish_name'],
+                    },
+                  },
+                },
+                'required': ['weekday', 'slots'],
+              },
+            },
+            'summary': {
+              'type': 'string',
+              'description':
+                  'A one-line human-readable description of the weekly '
+                  'rhythm. Shown to Rakhi in chat as confirmation.',
+            },
+          },
+          'required': ['month', 'week_template'],
+        },
+      });
     }
 
     return tools;
@@ -835,7 +941,7 @@ ${formatThoughts(recentThoughts)}
 
     final requestBody = {
       'model': _model,
-      'max_tokens': 1024,
+      'max_tokens': 2048,
       'system': systemPrompt,
       'tools': tools,
       'messages': collapsed,
@@ -901,7 +1007,7 @@ ${formatThoughts(recentThoughts)}
 
     final requestBody = {
       'model': _model,
-      'max_tokens': 1024,
+      'max_tokens': 2048,
       'system': systemPrompt,
       'messages': [
         {

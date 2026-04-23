@@ -38,16 +38,16 @@ class UserProfile {
     accentHex: '#D47BA0',
     ttsVoice: 'echo',
     personalityType: 'warm_companion',
-    // Sections she asked for (no Time / Goals / email — those are
-    // Pallav-only via the Claude tool gating in claude_service.dart
-    // and her own preference not to track multi-year HVAC goals):
-    //   Tasks | Habits | Thoughts | Finance | Meal Plans
+    // Meal Plans sits second — right after Tasks — because it's the
+    // highest-frequency tab for her daily routine (she opens it to
+    // know what to cook). Time / Goals / email are Pallav-only via
+    // the Claude tool gating in claude_service.dart.
     boardSections: [
       'Tasks',
+      'Meal Plans',
       'Habits',
       'Thoughts',
       'Finance',
-      'Meal Plans',
     ],
   );
 

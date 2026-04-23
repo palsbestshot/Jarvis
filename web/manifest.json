@@ -1,11 +1,11 @@
 {
-    "name": "jarvis",
-    "short_name": "jarvis",
+    "name": "Jarvis",
+    "short_name": "Jarvis",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0A0906",
+    "theme_color": "#D47BA0",
+    "description": "Rakhi's personal assistant — tasks, meals, thoughts.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

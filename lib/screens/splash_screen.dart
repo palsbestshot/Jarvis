@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/constants.dart';
 import '../core/theme.dart';
 import '../widgets/jarvis_logo.dart';
 import '../providers/auth_provider.dart';
@@ -41,6 +43,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     // "JARVIS banner" on every widget tap. Now the splash shows only
     // as long as auth actually takes.
     await AuthService.loadActiveUser(ref);
+
+    // Web deploy is dedicated to Rakhi's iPhone PWA — skip the user
+    // selector and auto-bind her identity. Pallav still sees the
+    // regular login flow on his Android APK.
+    if (kIsWeb && ref.read(activeUserIdProvider) == null) {
+      await AuthService.setActiveUser(AppConstants.rakhiUserId, ref);
+    }
 
     // Navigate based on user state
     final userId = ref.read(activeUserIdProvider);

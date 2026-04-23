@@ -1,12 +1,21 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:audioplayers/audioplayers.dart' as audio_players;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 
 class AudioService {
+  // Voice capture on Flutter Web can't use path_provider's temp dir — it
+  // doesn't exist in the browser. Phase 5 (Whisper proxy) will wire up
+  // MediaRecorder bytes → `POST /aiTranscribe`. Until then, these methods
+  // throw on web so the chat UI can hide the mic on kIsWeb and nothing
+  // calls into a half-wired recorder.
+  static const _webVoiceError =
+      'Voice recording on web is not wired yet. Use text input.';
+
   // Recording
   FlutterSoundRecorder? _recorder;
   bool isRecording = false;
@@ -18,6 +27,9 @@ class AudioService {
 
   // Initialization
   Future<void> initRecorder() async {
+    if (kIsWeb) {
+      throw UnsupportedError(_webVoiceError);
+    }
     try {
       // Request microphone permission
       final status = await Permission.microphone.request();
@@ -40,6 +52,9 @@ class AudioService {
 
   // Recording methods
   Future<void> startRecording() async {
+    if (kIsWeb) {
+      throw UnsupportedError(_webVoiceError);
+    }
     if (_recorder == null) {
       await initRecorder();
     }
@@ -95,6 +110,7 @@ class AudioService {
   }
 
   Future<String?> stopRecording() async {
+    if (kIsWeb) return null;
     if (_recorder == null || !isRecording) {
       return null;
     }
@@ -127,11 +143,25 @@ class AudioService {
   // Playback methods
   Future<void> playFromBytes(Uint8List audioBytes) async {
     try {
-      // Write bytes to temp file
+      if (kIsWeb) {
+        // Browser: no filesystem — feed the mp3 bytes directly to
+        // audioplayers via BytesSource. This is the same route TTS
+        // playback will take once the web Whisper/TTS proxy is live.
+        _player.onPlayerStateChanged.listen((state) {
+          if (state == audio_players.PlayerState.completed) {
+            isPlaying = false;
+          }
+        });
+        await _player.play(audio_players.BytesSource(audioBytes));
+        isPlaying = true;
+        return;
+      }
+
+      // Native: keep the existing temp-file path for Android — unchanged.
       final tempDir = await getTemporaryDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final tempPath = '${tempDir.path}/jarvis_tts_$timestamp.mp3';
-      
+
       final file = File(tempPath);
       await file.writeAsBytes(audioBytes);
 

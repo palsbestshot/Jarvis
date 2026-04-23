@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,7 +17,13 @@ class NotificationService {
 
   NotificationService() {
     _localNotifications = FlutterLocalNotificationsPlugin();
-    _initializeLocalNotifications();
+    // Local notifications (flutter_local_notifications) are Android-only
+    // — the web plugin is a stub that throws MissingPluginException on
+    // most methods. On web, Rakhi's reminders arrive via FCM web push
+    // (wired in Phase 6) instead. Skip init entirely for web.
+    if (!kIsWeb) {
+      _initializeLocalNotifications();
+    }
   }
 
   Future<void> _initializeLocalNotifications() async {
@@ -117,37 +124,44 @@ class NotificationService {
       _saveFCMToken(userId, newToken);
     });
 
-    // Configure foreground message handler
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-      RemoteNotification? notification = message.notification;
-      AndroidNotification? android = message.notification?.android;
+    // Foreground handler + local task reminder scheduling both depend
+    // on flutter_local_notifications, which is Android-only. On web the
+    // browser + service worker render FCM pushes directly, and task
+    // reminders (Phase 6) will arrive via scheduled Cloud Functions
+    // instead of client-side zonedSchedule.
+    if (!kIsWeb) {
+      // Configure foreground message handler
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+        RemoteNotification? notification = message.notification;
+        AndroidNotification? android = message.notification?.android;
 
-      if (notification != null && android != null) {
-        await _localNotifications.show(
-          notification.hashCode,
-          notification.title,
-          notification.body,
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'jarvis_channel',
-              'JARVIS Notifications',
-              channelDescription: 'Reminders and briefings from JARVIS',
-              importance: Importance.max,
-              priority: Priority.high,
-              icon: '@mipmap/ic_launcher',
+        if (notification != null && android != null) {
+          await _localNotifications.show(
+            notification.hashCode,
+            notification.title,
+            notification.body,
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'jarvis_channel',
+                'JARVIS Notifications',
+                channelDescription: 'Reminders and briefings from JARVIS',
+                importance: Importance.max,
+                priority: Priority.high,
+                icon: '@mipmap/ic_launcher',
+              ),
             ),
-          ),
-        );
-      }
-    });
+          );
+        }
+      });
 
-    // Configure onMessageOpenedApp handler
+      // Start listening for tasks and scheduling reminders
+      _listenForTasks(userId);
+    }
+
+    // Configure onMessageOpenedApp handler (works on web + Android)
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       _handleNotificationTap(message.data);
     });
-
-    // Start listening for tasks and scheduling reminders
-    _listenForTasks(userId);
   }
 
   // ─── Local Task Reminders ──────────────────────────────────────────────────

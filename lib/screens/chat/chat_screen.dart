@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1335,19 +1336,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                     ),
                   ),
 
-                // Mic button
-                SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: IconButton(
-                    onPressed: _isRecording ? null : _startRecording,
-                    icon: Icon(
-                      Icons.mic,
-                      color: user.accentColor,
-                      size: 24,
+                // Mic button — hidden on web until the Whisper proxy is
+                // wired (Phase 5). Browser voice capture needs MediaRecorder
+                // + POST to the aiTranscribe Function, not flutter_sound's
+                // file-based recording which has no temp dir in the browser.
+                if (!kIsWeb)
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: IconButton(
+                      onPressed: _isRecording ? null : _startRecording,
+                      icon: Icon(
+                        Icons.mic,
+                        color: user.accentColor,
+                        size: 24,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ),

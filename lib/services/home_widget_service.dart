@@ -10,6 +10,7 @@
 // to the default "Ask Jarvis…" hint.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:home_widget/home_widget.dart';
 import 'package:intl/intl.dart';
 
@@ -33,12 +34,17 @@ class HomeWidgetService {
   /// on OEMs that don't fully support app widgets (some Xiaomi/Honor
   /// skins), and bubbling that to the board StreamBuilder crashes the
   /// tab. All exceptions are swallowed with a debug log.
+  ///
+  /// On Flutter Web this is a no-op — Rakhi's PWA has no Android
+  /// home-screen widget. Guarded by `kIsWeb` because the home_widget
+  /// plugin doesn't compile for web at all.
   static Future<void> pushToday({
     required int done,
     required int total,
   }) async {
     _lastDone = done;
     _lastTotal = total;
+    if (kIsWeb) return;
     try {
       final today = DateFormat('EEE, d MMM').format(DateTime.now());
       await HomeWidget.saveWidgetData<int>(_kDone, done);
@@ -57,8 +63,9 @@ class HomeWidgetService {
   /// Derive today's counts from a Firestore snapshot of pending tasks and
   /// push. Call this from a StreamBuilder in the board screen.
   ///
-  /// Also never throws — same rationale as pushToday.
+  /// Also never throws — same rationale as pushToday. No-op on web.
   static Future<void> pushFromSnapshot(QuerySnapshot snapshot) async {
+    if (kIsWeb) return;
     try {
       final today = _istDateKey();
       int done = 0;
@@ -85,13 +92,14 @@ class HomeWidgetService {
   /// The bar text is Jarvis's message; the ring + count stay unchanged.
   ///
   /// Swallows all exceptions — the chat flow must not crash if the widget
-  /// plugin is unavailable.
+  /// plugin is unavailable. No-op on web.
   static Future<void> showFeedback(
     String message, {
     Duration duration = const Duration(seconds: 4),
   }) async {
     final trimmed = message.trim();
     if (trimmed.isEmpty) return;
+    if (kIsWeb) return;
     try {
       await HomeWidget.saveWidgetData<String>(
         _kFeedback,

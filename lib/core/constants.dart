@@ -1,5 +1,6 @@
 // App constants and configuration
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 class AppConstants {
@@ -21,9 +22,38 @@ class AppConstants {
   static Map<String, dynamic> _env = {};
   static bool _loaded = false;
 
-  /// Call once at app startup (in main.dart)
+  // ── Web-only: compile-time constants injected via
+  //    `flutter build web --dart-define-from-file=env.web.json`.
+  //    env.web.json intentionally does NOT carry provider API keys —
+  //    web builds call Claude/OpenAI through the Firebase Functions
+  //    proxy (aiChat / aiTranscribe / aiTTS) so keys never touch the
+  //    browser. INGEST_SECRET authenticates those proxy calls.
+  //    Android builds ignore these entirely — loadEnv() reads env.json
+  //    from the asset bundle like it always did.
+  static const String _webIngestSecret =
+      String.fromEnvironment('INGEST_SECRET', defaultValue: '');
+
+  /// Call once at app startup (in main.dart).
+  ///
+  /// Android: reads bundled `env.json` asset (unchanged behaviour).
+  /// Web: skips the asset load entirely (env.json is swapped to `{}`
+  /// by the web-deploy script so nothing sensitive bundles into the JS
+  /// anyway — this `kIsWeb` branch is belt-and-suspenders). Values come
+  /// from `--dart-define-from-file=env.web.json` via the static const
+  /// above; provider keys stay empty and AI calls route through the
+  /// proxy Functions.
   static Future<void> loadEnv() async {
     if (_loaded) return;
+    if (kIsWeb) {
+      _env = {
+        'CLAUDE_API_KEY': '',
+        'OPENAI_API_KEY': '',
+        'TAVILY_API_KEY': '',
+        'INGEST_SECRET': _webIngestSecret,
+      };
+      _loaded = true;
+      return;
+    }
     try {
       final jsonStr = await rootBundle.loadString('env.json');
       _env = jsonDecode(jsonStr) as Map<String, dynamic>;
@@ -33,10 +63,16 @@ class AppConstants {
     }
   }
 
-  // API keys (loaded from bundled env.json at runtime)
+  // API keys (loaded from bundled env.json at runtime on Android;
+  // empty on web — see loadEnv above).
   static String get claudeApiKey => _env['CLAUDE_API_KEY'] ?? '';
   static String get openaiApiKey => _env['OPENAI_API_KEY'] ?? '';
   static String get tavilyApiKey => _env['TAVILY_API_KEY'] ?? '';
+
+  /// Auth header for the AI proxy Firebase Functions (web build only).
+  /// On Android this is empty and unused — the native path hits
+  /// api.anthropic.com / api.openai.com directly.
+  static String get ingestSecret => _env['INGEST_SECRET'] ?? '';
 
   // AI Models
   static const String claudeModel = 'claude-haiku-4-5-20251001';

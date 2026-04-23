@@ -58,27 +58,21 @@ class DefaultFirebaseOptions {
   );
 
   // Web (Flutter Web PWA for Rakhi — jarvis-78573.web.app).
+  // Registered 2026-04-23 via Firebase Console → Add app → Web ("Rakhi PWA").
+  // Values below match the firebaseConfig block shown in the console; they
+  // must also match web/firebase-messaging-sw.js exactly, otherwise the
+  // service worker subscribes to a different project than the app and
+  // push tokens silently stop being delivered.
   //
-  // FIXME: `appId` must be filled in before the first web deploy.
-  //   1. Firebase Console → jarvis-78573 → Project settings → General
-  //      → "Your apps" → Add app → Web.
-  //   2. Register the app with a nickname (e.g. "Rakhi PWA"), copy
-  //      the `appId` value out of the generated firebaseConfig snippet.
-  //   3. Paste it below (replaces WEB_APP_ID).
-  //   4. In the same panel, grab the web `apiKey` — it's distinct from
-  //      the Android one — and paste into `apiKey` below.
-  //   5. Also copy the same config into web/firebase-messaging-sw.js.
-  //   6. Under Cloud Messaging → Web Push certificates, generate a
-  //      VAPID key pair and paste the PUBLIC key into env.web.json
-  //      as VAPID_PUBLIC_KEY.
-  //
-  // The Android block above is untouched by any web-app registration.
+  // The Android block above is untouched by this web-app registration —
+  // they're two separate Firebase app entries in the same project.
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyCKLv9Mr_YZ6f4CzBCPVgeoPaJ3RrEj5gQ', // FIXME replace with web apiKey
-    appId: '1:546240967899:web:WEB_APP_ID_PENDING_CONSOLE_REGISTRATION',
+    apiKey: 'AIzaSyCuzulGhpmhq1EuYlIvz0eMsmvgvD1qh3M',
+    appId: '1:546240967899:web:21f2901d31e2b15dca48fe',
     messagingSenderId: '546240967899',
     projectId: 'jarvis-78573',
     storageBucket: 'jarvis-78573.firebasestorage.app',
     authDomain: 'jarvis-78573.firebaseapp.com',
+    measurementId: 'G-H565RT71Y9',
   );
 }

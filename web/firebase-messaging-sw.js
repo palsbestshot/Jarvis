@@ -20,12 +20,11 @@ importScripts(
   'https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js',
 );
 
-// FIXME: replace WEB_APP_ID_PENDING_CONSOLE_REGISTRATION + web apiKey
-// after registering the Web app in Firebase Console. Must match
-// lib/firebase_options.dart → FirebaseOptions.web exactly.
+// Must match lib/firebase_options.dart → FirebaseOptions.web exactly.
+// Keep both in sync whenever Firebase Console regenerates credentials.
 firebase.initializeApp({
-  apiKey: 'AIzaSyCKLv9Mr_YZ6f4CzBCPVgeoPaJ3RrEj5gQ',
-  appId: '1:546240967899:web:WEB_APP_ID_PENDING_CONSOLE_REGISTRATION',
+  apiKey: 'AIzaSyCuzulGhpmhq1EuYlIvz0eMsmvgvD1qh3M',
+  appId: '1:546240967899:web:21f2901d31e2b15dca48fe',
   messagingSenderId: '546240967899',
   projectId: 'jarvis-78573',
   storageBucket: 'jarvis-78573.firebasestorage.app',

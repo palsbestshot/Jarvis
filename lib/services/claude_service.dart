@@ -113,7 +113,43 @@ COOKING + MEAL CONTEXT (applies to every meal / recipe / food reply):
 - Respect time pressure — 20-30 min dishes beat 60+ min unless she
   asks for a weekend / festive cook.
 - Seasonal / Ayurvedic cues are welcome when she asks ("monsoon khana",
-  "something warming") — lean into warm, light, easy-to-digest.''';
+  "something warming") — lean into warm, light, easy-to-digest.
+
+MEAL PLANNING MEMORY (applies BEFORE you emit any multi-day plan):
+- Rakhi's food rhythm is personal. Before calling plan_day_meals or
+  plan_week_meals, CALL get_meal_plan_range on the past 14-21 days
+  (from_date = today - 21 days, to_date = today - 1). Use the result
+  to learn her actual pattern:
+    (a) Cuisine ratio — roughly how many days/week are South Indian
+        (idli, dosa, upma, sambar-chawal), North Indian (dal-chawal,
+        roti-sabzi, paratha), Indo-Chinese (fried rice, hakka, manchurian),
+        comfort/simple (khichdi, curd-rice), festive/rich (paneer, biryani).
+        PRESERVE THAT RATIO in the new plan.
+    (b) Slot habits — does she usually do a light breakfast + heavy lunch,
+        or heavy breakfast + light dinner, etc. Keep the same shape.
+    (c) Frequent dishes — the 4-6 dishes that repeat most. These ARE her
+        comfort zone. It's fine to include 1-2 of them, but not 5.
+    (d) Toddler-safe winners — dishes she cooked when she tagged "toddler"
+        or that are clearly mild. Lean on these for lunch/dinner when the
+        week has busy days.
+- VARY WITHIN HER TASTE — the goal is "different but same essence":
+    (1) Avoid the EXACT dishes from the past 14 days. If she had "Palak
+        Paneer" last Tuesday, pick a different paneer dish (Matar Paneer,
+        Paneer Bhurji) instead of repeating.
+    (2) Introduce 1-2 NEW or lesser-used catalog dishes per week that
+        match her cuisine ratio — use query_dishes to pick from her
+        existing catalog first, only invent a new dish if the catalog
+        doesn't cover the slot. Call out the new one in the summary
+        so she sees it ("Trying Vegetable Handi on Wed — same North-
+        Indian dinner vibe, just a fresh combo").
+    (3) Keep cuisine BALANCE across the week similar to her past pattern
+        — don't suddenly give her 5 South Indian days if she usually does
+        2.
+    (4) Keep prep time realistic (<=30 min weekday) — match what she
+        actually cooks, not aspirational.
+- If the past-weeks fetch returns empty (new user / no history yet),
+  fall back to the defaults in plan_week_meals and note "No past pattern
+  yet — this week builds the baseline".''';
     }
 
     // Format recent data as readable text
@@ -667,6 +703,12 @@ ${formatThoughts(recentThoughts)}
             "each day's slots with the resolved dish name + tags + prep "
             "minutes so you can estimate kcal / protein / carbs / fat per "
             "dish using standard Indian portion sizes. "
+            "ALSO USE THIS FOR PAST-WEEKS LEARNING before proposing a new "
+            "plan — pass from_date = today - 21 days, to_date = today - 1 "
+            "to pull her recent cooking pattern. Feed the cuisine ratio + "
+            "frequent dishes back into plan_day_meals / plan_week_meals so "
+            "the new plan is different from the past 2 weeks but keeps her "
+            "taste essence. "
             "NUTRITION MATH — when she asks about calories or macros: "
             "(a) Use standard Indian home-cook portions: 1 katori = "
             "~150g cooked / 1 roti = ~40g / 2 idli = ~100g / 1 paratha "
@@ -804,9 +846,12 @@ ${formatThoughts(recentThoughts)}
             "Lay out a full or partial day of meals for Rakhi. Use when "
             "she says 'plan tomorrow's meals', 'fill Monday's lunch and "
             "dinner', 'what should I eat all day on Sunday'. Consider her "
-            "dish_catalog (call query_dishes first), vary dishes across "
-            "the day, and honour any constraints she mentions (light "
-            "dinner, 'use up the paneer', etc.). "
+            "dish_catalog (call query_dishes first) AND her recent cooking "
+            "— call get_meal_plan_range for the past 7-14 days so you can "
+            "avoid repeating the exact dishes she just had, while still "
+            "matching her cuisine style. Vary dishes across the day, and "
+            "honour any constraints she mentions (light dinner, 'use up "
+            "the paneer', etc.). "
             "APPLY THESE DEFAULTS unless she says otherwise: "
             "(1) Indian home-style — mix of carbs, dal/protein, sabzi, curd. "
             "(2) Balance the day nutritionally — don't stack all heavy slots. "
@@ -884,6 +929,24 @@ ${formatThoughts(recentThoughts)}
             "'weekly meal plan from Monday', 'use these vegetables this "
             "week'. This is the go-to tool whenever she ties meal "
             "planning to shopping / groceries. "
+            "STEP 0 — LEARN FROM HER PAST BEFORE EMITTING THIS TOOL: "
+            "Call get_meal_plan_range for the past 14-21 days FIRST to "
+            "learn her cuisine ratio, slot habits, frequent dishes, and "
+            "toddler-safe winners. Then call query_dishes to see the full "
+            "catalog she's used. Only THEN emit plan_week_meals. Design "
+            "the new week so it is DIFFERENT FROM THE LAST 14 DAYS BUT "
+            "CARRIES THE SAME ESSENCE: "
+            "  • Preserve her cuisine ratio (e.g. 2 S.Indian + 3 N.Indian "
+            "    + 1 Indo-Chinese + 1 comfort day if that's her baseline). "
+            "  • Avoid the exact dishes she had in the past 14 days. "
+            "    Substitute with a same-family variant (Palak Paneer → "
+            "    Matar Paneer, Dosa → Uttapam, Dal Fry → Dal Tadka). "
+            "  • Introduce 1-2 lesser-used dishes from her catalog that "
+            "    fit her taste profile, so variety grows organically. Name "
+            "    them in the `summary` so she sees the intention. "
+            "  • If she has no past history, note this in the summary and "
+            "    fall back to the standard defaults below — that week "
+            "    becomes her baseline. "
             "HOW TO USE INGREDIENTS: "
             "(1) `ingredients_bought` is what she just bought — she "
             "wants these consumed across the week before they spoil. "

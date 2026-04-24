@@ -6,6 +6,8 @@
 // `+ New dish` button at the bottom opens CustomDishForm for a
 // Rakhi-added dish, which lands back here as a fresh list entry.
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../models/dish.dart';
@@ -151,6 +153,7 @@ class _DishPickerSheetState extends State<DishPickerSheet>
                             ? (m['times_used'] as num).toInt()
                             : 0,
                         isCustom: m['is_custom'] == true,
+                        imageUrl: m['image_url']?.toString(),
                       );
                     }).toList();
                     return TabBarView(
@@ -236,6 +239,21 @@ class _DishPickerSheetState extends State<DishPickerSheet>
         ),
       );
     }
+    if (kIsWeb) {
+      return GridView.builder(
+        controller: controller,
+        padding: const EdgeInsets.symmetric(
+            horizontal: JarvisTheme.md, vertical: JarvisTheme.xs),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 0.85,
+        ),
+        itemCount: dishes.length,
+        itemBuilder: (context, i) => _dishCard(dishes[i]),
+      );
+    }
     return ListView.separated(
       controller: controller,
       padding: const EdgeInsets.symmetric(horizontal: JarvisTheme.md),
@@ -297,6 +315,139 @@ class _DishPickerSheetState extends State<DishPickerSheet>
         );
       },
     );
+  }
+
+  Widget _dishCard(Dish d) {
+    final isCurrent = d.id == widget.currentDishId;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () =>
+          Navigator.of(context).pop(DishPickResult(dishId: d.id)),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: JarvisTheme.surface2),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFF9D6E2).withOpacity(0.4),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 70,
+              width: double.infinity,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: (d.imageUrl != null && d.imageUrl!.isNotEmpty)
+                    ? CachedNetworkImage(
+                        imageUrl: d.imageUrl!,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => _emojiPlaceholder(d),
+                        errorWidget: (_, __, ___) => _emojiPlaceholder(d),
+                      )
+                    : _emojiPlaceholder(d),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    d.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'InstrumentSerif',
+                      fontSize: 15,
+                      color: JarvisTheme.rakhiAccentDeep,
+                    ),
+                  ),
+                ),
+                if (isCurrent) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: widget.user.accentColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(
+                      '•',
+                      style: TextStyle(
+                        color: widget.user.accentColor,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              d.tags.isNotEmpty
+                  ? d.tags.first
+                  : '${d.prepMinutes} min',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'DMSans',
+                fontSize: 10,
+                color: JarvisTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emojiPlaceholder(Dish d) {
+    final emoji = _emojiForDish(d);
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            JarvisTheme.surface2,
+            JarvisTheme.surface2.withOpacity(0.6),
+          ],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: Text(emoji, style: const TextStyle(fontSize: 28)),
+    );
+  }
+
+  String _emojiForDish(Dish d) {
+    final tags = d.tags.map((t) => t.toLowerCase()).toList();
+    final name = d.name.toLowerCase();
+    if (tags.contains('lentils') ||
+        name.contains('dal') ||
+        name.contains('sambar')) return '🫘';
+    if (tags.contains('rice') || name.contains('rice') ||
+        name.contains('biryani') || name.contains('pulao')) return '🍚';
+    if (tags.contains('bread') || name.contains('roti') ||
+        name.contains('paratha') || name.contains('naan')) return '🫓';
+    if (tags.contains('sweet') || name.contains('ladoo') ||
+        name.contains('halwa') || name.contains('kheer')) return '🍮';
+    if (tags.contains('vegetable') || tags.contains('sabzi') ||
+        name.contains('sabzi')) return '🥬';
+    if (tags.contains('snack') || name.contains('samosa') ||
+        name.contains('pakora')) return '🥟';
+    if (tags.contains('drink') || name.contains('lassi') ||
+        name.contains('chai') || name.contains('tea')) return '🥛';
+    if (tags.contains('breakfast') || name.contains('poha') ||
+        name.contains('upma') || name.contains('idli')) return '🍛';
+    return '🍽️';
   }
 
   Future<void> _openNewDishForm() async {

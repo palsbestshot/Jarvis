@@ -362,41 +362,75 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     // Timestamp
     final time = DateFormat('h:mm a').format(message.timestamp);
 
-    // Bubble styling
+    // Bubble styling — branches on kIsWeb so Rakhi's web PWA gets the
+    // pink light palette (solid accent user bubble, white Jarvis bubble
+    // with subtle pink shadow + 18-radius) while Pallav's Android APK
+    // keeps the warm amber surface bubbles with 16-radius.
     Color backgroundColor;
     Color borderColor;
+    Color textColor;
+    Color timestampColor;
     BorderRadius borderRadius;
     Alignment alignment;
+    List<BoxShadow>? bubbleShadow;
 
     if (isUser) {
-      backgroundColor = JarvisTheme.pallavAccentSoft;
-      borderColor = JarvisTheme.pallavAccentBorder;
-      borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(16),
-        topRight: Radius.circular(16),
-        bottomLeft: Radius.circular(16),
-        bottomRight: Radius.circular(4),
-      );
+      if (kIsWeb) {
+        backgroundColor = accentColor;
+        borderColor = Colors.transparent;
+        textColor = Colors.white;
+        timestampColor = Colors.white.withOpacity(0.75);
+        borderRadius = const BorderRadius.only(
+          topLeft: Radius.circular(18),
+          topRight: Radius.circular(18),
+          bottomLeft: Radius.circular(18),
+          bottomRight: Radius.circular(6),
+        );
+      } else {
+        backgroundColor = JarvisTheme.pallavAccentSoft;
+        borderColor = JarvisTheme.pallavAccentBorder;
+        textColor = JarvisTheme.textPrimary;
+        timestampColor = JarvisTheme.textMuted;
+        borderRadius = const BorderRadius.only(
+          topLeft: Radius.circular(16),
+          topRight: Radius.circular(16),
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(4),
+        );
+      }
       alignment = Alignment.centerRight;
-    } else if (isToolResult) {
-      backgroundColor = JarvisTheme.surface;
-      borderColor = JarvisTheme.surface2;
-      borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(16),
-        topRight: Radius.circular(16),
-        bottomLeft: Radius.circular(4),
-        bottomRight: Radius.circular(16),
-      );
-      alignment = Alignment.centerLeft;
     } else {
-      backgroundColor = JarvisTheme.surface;
-      borderColor = JarvisTheme.surface2;
-      borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(16),
-        topRight: Radius.circular(16),
-        bottomLeft: Radius.circular(4),
-        bottomRight: Radius.circular(16),
-      );
+      // Jarvis bubbles (both tool results and text replies).
+      if (kIsWeb) {
+        backgroundColor = Colors.white;
+        borderColor = JarvisTheme.surface2;
+        textColor = JarvisTheme.textPrimary;
+        timestampColor = JarvisTheme.textMuted;
+        borderRadius = const BorderRadius.only(
+          topLeft: Radius.circular(18),
+          topRight: Radius.circular(18),
+          bottomLeft: Radius.circular(6),
+          bottomRight: Radius.circular(18),
+        );
+        bubbleShadow = [
+          BoxShadow(
+            color: const Color(0xFFF9D6E2).withOpacity(0.33),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ];
+      } else {
+        backgroundColor = JarvisTheme.surface;
+        borderColor = JarvisTheme.surface2;
+        textColor = JarvisTheme.textPrimary;
+        timestampColor = JarvisTheme.textMuted;
+        borderRadius = const BorderRadius.only(
+          topLeft: Radius.circular(16),
+          topRight: Radius.circular(16),
+          bottomLeft: Radius.circular(4),
+          bottomRight: Radius.circular(16),
+        );
+      }
       alignment = Alignment.centerLeft;
     }
 
@@ -418,6 +452,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             width: 1,
           ),
           borderRadius: borderRadius,
+          boxShadow: bubbleShadow,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -427,7 +462,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 children: [
                   Icon(
                     Icons.mic,
-                    color: accentColor,
+                    color: isUser && kIsWeb ? Colors.white : accentColor,
                     size: 12,
                   ),
                   const SizedBox(width: 4),
@@ -435,7 +470,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                     child: Text(
                       message.content,
                       style: JarvisTheme.bodyMedium.copyWith(
-                        color: JarvisTheme.textPrimary,
+                        color: textColor,
                         fontStyle: FontStyle.italic,
                       ),
                     ),
@@ -447,14 +482,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 message.content,
                 style: isToolResult
                     ? JarvisTheme.bodySmall.copyWith(color: JarvisTheme.confirmText)
-                    : JarvisTheme.bodyMedium.copyWith(color: JarvisTheme.textPrimary),
+                    : JarvisTheme.bodyMedium.copyWith(color: textColor),
               ),
             const SizedBox(height: JarvisTheme.xs),
             Text(
               time,
               style: TextStyle(
                 fontFamily: 'DMSans',
-                color: JarvisTheme.textMuted,
+                color: timestampColor,
                 fontSize: 11,
                 letterSpacing: 1.2,
               ),
@@ -1285,12 +1320,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               vertical: 6,
             ),
             decoration: BoxDecoration(
-              color: JarvisTheme.surface2,
+              color: kIsWeb ? Colors.white : JarvisTheme.surface2,
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
                 color: JarvisTheme.surface2,
                 width: 1,
               ),
+              boxShadow: kIsWeb
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFFF9D6E2).withOpacity(0.4),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
             ),
             child: Row(
               children: [
@@ -1327,8 +1371,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                   _buildActionBtn(
                     onPressed: _pickImage,
                     icon: Icons.camera_alt_outlined,
-                    bg: JarvisTheme.surface3,
-                    iconColor: JarvisTheme.textSecondary,
+                    bg: kIsWeb ? JarvisTheme.surface2 : JarvisTheme.surface3,
+                    iconColor: kIsWeb
+                        ? user.accentColor
+                        : JarvisTheme.textSecondary,
                   ),
                 if (_currentMode == ChatMode.chat) const SizedBox(width: 6),
 
@@ -1345,7 +1391,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                           onPressed: _sendMessage,
                           icon: Icons.arrow_upward_rounded,
                           bg: user.accentColor,
-                          iconColor: const Color(0xFF2A1C0A),
+                          iconColor: kIsWeb
+                              ? Colors.white
+                              : const Color(0xFF2A1C0A),
                         )
                       : const SizedBox.shrink(key: ValueKey('no_send')),
                 ),
@@ -1368,18 +1416,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 // Mic button. On web we route through flutter_sound_web
                 // (MediaRecorder) + POST to the aiTranscribe Function so
                 // provider keys stay server-side.
-                SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: IconButton(
+                if (kIsWeb)
+                  _buildActionBtn(
                     onPressed: _isRecording ? null : _startRecording,
-                    icon: Icon(
-                      Icons.mic,
-                      color: user.accentColor,
-                      size: 24,
+                    icon: Icons.mic,
+                    bg: JarvisTheme.surface2,
+                    iconColor: user.accentColor,
+                  )
+                else
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: IconButton(
+                      onPressed: _isRecording ? null : _startRecording,
+                      icon: Icon(
+                        Icons.mic,
+                        color: user.accentColor,
+                        size: 24,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ),

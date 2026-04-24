@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../core/time_categories.dart';
@@ -489,6 +490,18 @@ class ChatNotifier extends Notifier<ChatState> {
         final financeId = await _firestoreService.saveFinance(userId, toolInput);
         final title = toolInput['title'] ?? 'finance entry';
         return '✓ Finance saved — $title';
+
+      case 'move_savings':
+        final amountRaw = toolInput['amount'];
+        final amount = amountRaw is int
+            ? amountRaw
+            : int.tryParse(amountRaw?.toString() ?? '') ?? 0;
+        if (amount <= 0) {
+          return 'Amount missing or zero — tell me how many rupees to move.';
+        }
+        final note = (toolInput['note'] ?? 'Jarvis nudge').toString();
+        await _firestoreService.moveSavings(userId, amount, note: note);
+        return '✓ Moved ₹$amount to your savings jar.';
 
       case 'save_meal':
         return await _handleSaveMeal(userId, toolInput);

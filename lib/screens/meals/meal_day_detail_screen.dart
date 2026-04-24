@@ -6,6 +6,7 @@
 // Tap `+ Add <slot>` or the overflow "Change" → opens DishPickerSheet.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme.dart';
@@ -221,15 +222,40 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
   Widget _slotCard(MealPlanDay plan, MealSlotId slot) {
     final slotValue = plan.slot(slot);
     final isPlanned = slotValue != null && slotValue.dishId.isNotEmpty;
+    final Color cardBg;
+    final Color borderColor;
+    final List<BoxShadow>? shadow;
+    final double radius;
+    if (kIsWeb) {
+      radius = 14;
+      if (isPlanned) {
+        cardBg = Colors.white;
+        borderColor = JarvisTheme.surface2;
+        shadow = [
+          BoxShadow(
+            color: const Color(0xFFF9D6E2).withOpacity(0.4),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ];
+      } else {
+        cardBg = JarvisTheme.surface2;
+        borderColor = JarvisTheme.surface3;
+        shadow = null;
+      }
+    } else {
+      radius = JarvisTheme.medium.toDouble();
+      cardBg = JarvisTheme.surface;
+      borderColor = JarvisTheme.surface2;
+      shadow = null;
+    }
     return Container(
       margin: const EdgeInsets.symmetric(vertical: JarvisTheme.xs),
       decoration: BoxDecoration(
-        color: JarvisTheme.surface,
-        borderRadius: BorderRadius.circular(JarvisTheme.medium),
-        border: Border.all(
-          color: JarvisTheme.surface2,
-          width: 1,
-        ),
+        color: cardBg,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: borderColor, width: 1),
+        boxShadow: shadow,
       ),
       child: Padding(
         padding: const EdgeInsets.all(JarvisTheme.md),
@@ -241,25 +267,32 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
   }
 
   Widget _emptySlotBody(MealSlotId slot) {
+    final labelStyle = kIsWeb
+        ? TextStyle(
+            fontFamily: 'DMSans',
+            fontSize: 10,
+            color: widget.user.accentColor,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.0,
+          )
+        : JarvisTheme.bodySmall.copyWith(
+            color: JarvisTheme.textMuted,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          );
+    final labelText = kIsWeb ? slot.label.toUpperCase() : slot.label;
     return Row(
       children: [
+        SizedBox(
+          width: kIsWeb ? 62 : null,
+          child: Text(labelText, style: labelStyle),
+        ),
+        if (!kIsWeb) const SizedBox(width: JarvisTheme.xs),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(slot.label,
-                  style: JarvisTheme.bodySmall.copyWith(
-                    color: JarvisTheme.textMuted,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.5,
-                  )),
-              const SizedBox(height: JarvisTheme.xs),
-              Text(
-                'Not planned',
-                style: JarvisTheme.bodyMedium
-                    .copyWith(color: JarvisTheme.textSecondary),
-              ),
-            ],
+          child: Text(
+            'Not planned',
+            style: JarvisTheme.bodyMedium
+                .copyWith(color: JarvisTheme.textSecondary),
           ),
         ),
         TextButton.icon(
@@ -276,6 +309,37 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
 
   Widget _plannedSlotBody(
       MealPlanDay plan, MealSlotId slot, MealSlot value) {
+    final labelStyle = kIsWeb
+        ? TextStyle(
+            fontFamily: 'DMSans',
+            fontSize: 10,
+            color: widget.user.accentColor,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.0,
+          )
+        : JarvisTheme.bodySmall.copyWith(
+            color: JarvisTheme.textMuted,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          );
+    final dishNameStyle = kIsWeb
+        ? const TextStyle(
+            fontFamily: 'InstrumentSerif',
+            fontSize: 20,
+            color: JarvisTheme.rakhiAccentDeep,
+            fontWeight: FontWeight.w400,
+          )
+        : JarvisTheme.bodyLarge.copyWith(
+            color: JarvisTheme.textPrimary,
+            fontWeight: FontWeight.w600,
+          );
+    final metaStyle = kIsWeb
+        ? JarvisTheme.bodySmall.copyWith(
+            color: JarvisTheme.textSecondary,
+            fontSize: 12,
+          )
+        : JarvisTheme.bodySmall.copyWith(color: JarvisTheme.textMuted);
+    final labelText = kIsWeb ? slot.label.toUpperCase() : slot.label;
     return FutureBuilder<Dish?>(
       future: _loadDish(value.dishId),
       builder: (context, snap) {
@@ -283,30 +347,36 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            SizedBox(
+              width: kIsWeb ? 62 : null,
+              child: Padding(
+                padding: EdgeInsets.only(top: kIsWeb ? 4 : 0),
+                child: Text(labelText, style: labelStyle),
+              ),
+            ),
+            if (!kIsWeb) const SizedBox.shrink(),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(slot.label,
-                      style: JarvisTheme.bodySmall.copyWith(
-                        color: JarvisTheme.textMuted,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.5,
-                      )),
-                  const SizedBox(height: JarvisTheme.xs),
+                  if (!kIsWeb) ...[
+                    Text(slot.label,
+                        style: JarvisTheme.bodySmall.copyWith(
+                          color: JarvisTheme.textMuted,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                        )),
+                    const SizedBox(height: JarvisTheme.xs),
+                  ],
                   Text(
                     dish?.name ?? '(dish removed)',
-                    style: JarvisTheme.bodyLarge.copyWith(
-                      color: JarvisTheme.textPrimary,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: dishNameStyle,
                   ),
                   if (dish != null) ...[
                     const SizedBox(height: 2),
                     Text(
                       '${dish.prepMinutes} min • ${dish.tags.take(3).join(" · ")}',
-                      style: JarvisTheme.bodySmall
-                          .copyWith(color: JarvisTheme.textMuted),
+                      style: metaStyle,
                     ),
                   ],
                   if (value.notes != null && value.notes!.isNotEmpty) ...[

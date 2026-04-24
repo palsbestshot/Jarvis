@@ -11,6 +11,7 @@ import '../../core/theme.dart';
 import '../../models/dish.dart';
 import '../../models/user_profile.dart';
 import '../../services/claude_service.dart';
+import '../../services/dish_image_service.dart';
 import '../../services/firestore_service.dart';
 
 class CustomDishForm extends StatefulWidget {
@@ -39,6 +40,7 @@ class _CustomDishFormState extends State<CustomDishForm> {
   late final Set<MealSlotId> _slots;
   bool _saving = false;
   bool _enriching = false;
+  bool _findImage = true;
 
   @override
   void initState() {
@@ -79,7 +81,7 @@ class _CustomDishFormState extends State<CustomDishForm> {
       final prepMinutes = int.tryParse(_prepCtrl.text.trim()) ?? 20;
       final tags = _splitCsv(_tagsCtrl.text);
       final ingredients = _splitCsv(_ingredientsCtrl.text);
-      final data = {
+      final data = <String, dynamic>{
         'name': name,
         if (_hindiCtrl.text.trim().isNotEmpty)
           'name_hindi': _hindiCtrl.text.trim(),
@@ -90,6 +92,21 @@ class _CustomDishFormState extends State<CustomDishForm> {
         if (_notesCtrl.text.trim().isNotEmpty)
           'notes': _notesCtrl.text.trim(),
       };
+      if (_findImage) {
+        try {
+          final url = await DishImageService.findImageUrl(
+            name,
+            dishNameHindi: _hindiCtrl.text.trim().isEmpty
+                ? null
+                : _hindiCtrl.text.trim(),
+          ).timeout(const Duration(seconds: 5));
+          if (url != null && url.isNotEmpty) {
+            data['image_url'] = url;
+          }
+        } catch (_) {
+          // Best-effort — dish still saves without an image.
+        }
+      }
       final id = await _firestore.createDish(widget.user.id, data);
       if (mounted) Navigator.of(context).pop(id);
     } catch (e) {
@@ -299,6 +316,35 @@ class _CustomDishFormState extends State<CustomDishForm> {
           const SizedBox(height: JarvisTheme.md),
           _field(_notesCtrl, 'Notes (optional)',
               hint: 'tips, serving suggestions…', maxLines: 2),
+          const SizedBox(height: JarvisTheme.sm),
+          Container(
+            decoration: BoxDecoration(
+              color: JarvisTheme.surface2,
+              borderRadius: BorderRadius.circular(JarvisTheme.small),
+            ),
+            child: SwitchListTile(
+              dense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+              value: _findImage,
+              activeColor: widget.user.accentColor,
+              onChanged: (v) => setState(() => _findImage = v),
+              title: Text(
+                '🔍 Find picture automatically',
+                style: TextStyle(
+                  color: JarvisTheme.textPrimary,
+                  fontSize: 14,
+                ),
+              ),
+              subtitle: Text(
+                'Adds a free CC-licensed photo on save',
+                style: TextStyle(
+                  color: JarvisTheme.textMuted,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

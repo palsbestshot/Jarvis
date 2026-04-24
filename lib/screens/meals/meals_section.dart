@@ -7,6 +7,7 @@
 // opens this section on a fresh account, we write the 84 seed dishes
 // to `users/rakhi/dish_catalog`. Idempotent — safe across restarts.
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme.dart';
@@ -187,6 +188,13 @@ class _MealsSectionState extends State<MealsSection> {
 
   Widget _buildMonthHeader() {
     final label = DateFormat('MMMM yyyy').format(_visibleMonth);
+    // Rakhi web spec: Instrument Serif 18pt accentDeep (via displayMedium with accent color override).
+    final labelStyle = kIsWeb
+        ? JarvisTheme.displayMedium.copyWith(
+            fontSize: 22,
+            color: JarvisTheme.rakhiAccentDeep,
+          )
+        : JarvisTheme.headingMedium;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         JarvisTheme.md,
@@ -200,14 +208,18 @@ class _MealsSectionState extends State<MealsSection> {
           IconButton(
             onPressed: _prevMonth,
             icon: const Icon(Icons.chevron_left),
-            color: JarvisTheme.textSecondary,
+            color: kIsWeb
+                ? JarvisTheme.rakhiAccentDeep
+                : JarvisTheme.textSecondary,
             tooltip: 'Previous month',
           ),
-          Text(label, style: JarvisTheme.headingMedium),
+          Text(label, style: labelStyle),
           IconButton(
             onPressed: _nextMonth,
             icon: const Icon(Icons.chevron_right),
-            color: JarvisTheme.textSecondary,
+            color: kIsWeb
+                ? JarvisTheme.rakhiAccentDeep
+                : JarvisTheme.textSecondary,
             tooltip: 'Next month',
           ),
         ],
@@ -226,9 +238,12 @@ class _MealsSectionState extends State<MealsSection> {
                   child: Center(
                     child: Text(
                       l,
-                      style: JarvisTheme.bodySmall.copyWith(
+                      style: TextStyle(
+                        fontFamily: 'DMSans',
                         color: JarvisTheme.textMuted,
+                        fontSize: kIsWeb ? 11 : 12,
                         fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
                       ),
                     ),
                   ),
@@ -322,17 +337,60 @@ class _DayCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasPlans = plan != null && plan!.hasAnyPlanned;
+    // Rakhi web cells: non-planned = white + 1pt surface2 border, today =
+    // accent fill + white text + soft accent shadow. Pallav keeps the
+    // surface2 dark-theme cell look.
+    final Color cellBg;
+    final Color numberColor;
+    final Color dotPlannedColor;
+    final Color dotEmptyColor;
+    final Color? borderColor;
+    final double borderWidth;
+    final List<BoxShadow>? shadow;
+    if (kIsWeb) {
+      if (isToday) {
+        cellBg = accent;
+        numberColor = Colors.white;
+        dotPlannedColor = Colors.white;
+        dotEmptyColor = Colors.white.withOpacity(0.27);
+        borderColor = null;
+        borderWidth = 0;
+        shadow = [
+          BoxShadow(
+            color: accent.withOpacity(0.35),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ];
+      } else {
+        cellBg = Colors.white;
+        numberColor = JarvisTheme.textPrimary;
+        dotPlannedColor = accent;
+        dotEmptyColor = JarvisTheme.surface2;
+        borderColor = JarvisTheme.surface2;
+        borderWidth = 1;
+        shadow = null;
+      }
+    } else {
+      cellBg = JarvisTheme.surface2;
+      numberColor = JarvisTheme.textPrimary;
+      dotPlannedColor = accent;
+      dotEmptyColor = JarvisTheme.textMuted.withOpacity(0.25);
+      borderColor = isToday ? accent : null;
+      borderWidth = isToday ? 1.5 : 0;
+      shadow = null;
+    }
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(JarvisTheme.small),
+      borderRadius: BorderRadius.circular(10),
       child: Container(
         decoration: BoxDecoration(
-          color: JarvisTheme.surface2,
-          border: Border.all(
-            color: isToday ? accent : Colors.transparent,
-            width: isToday ? 1.5 : 0,
-          ),
-          borderRadius: BorderRadius.circular(JarvisTheme.small),
+          color: cellBg,
+          border: borderColor != null
+              ? Border.all(color: borderColor, width: borderWidth)
+              : null,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: shadow,
         ),
         padding: const EdgeInsets.all(4),
         child: Column(
@@ -341,8 +399,10 @@ class _DayCell extends StatelessWidget {
           children: [
             Text(
               '$day',
-              style: JarvisTheme.bodyMedium.copyWith(
-                color: JarvisTheme.textPrimary,
+              style: TextStyle(
+                fontFamily: 'DMSans',
+                fontSize: 13,
+                color: numberColor,
                 fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
               ),
               textAlign: TextAlign.center,
@@ -361,9 +421,7 @@ class _DayCell extends StatelessWidget {
                       margin: const EdgeInsets.symmetric(horizontal: 0.5),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: planned
-                            ? accent
-                            : JarvisTheme.textMuted.withOpacity(0.25),
+                        color: planned ? dotPlannedColor : dotEmptyColor,
                       ),
                     );
                   }).toList(),

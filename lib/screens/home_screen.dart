@@ -808,7 +808,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   const SizedBox(height: 1),
                   Text(
                     subtitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'DMSans',
                       fontSize: 11,
                       color: JarvisTheme.textSecondary,

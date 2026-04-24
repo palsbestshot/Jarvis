@@ -1104,6 +1104,35 @@ ${formatThoughts(recentThoughts)}
           'required': ['week_start', 'days'],
         },
       });
+
+      // ── Finance: savings jar ────────────────────────────────────────
+      // Rakhi's Finance screen shows a "Jarvis nudge" pill ("Move ₹500 to
+      // savings jar today?"). When she says yes, or says "move ₹X to
+      // savings" / "add ₹X to jar" in chat, call this tool.
+      tools.add({
+        'name': 'move_savings',
+        'description':
+            "Move money to Rakhi's savings jar. Call when she agrees to "
+            "the Jarvis nudge on the Finance screen, or says 'move ₹X to "
+            "savings', 'add ₹X to jar', 'stash ₹X aside', etc. Amount is "
+            "in rupees (integer).",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'amount': {
+              'type': 'integer',
+              'description': 'Rupees to add to the savings jar.',
+            },
+            'note': {
+              'type': 'string',
+              'description':
+                  'Optional short reason, e.g. "Under-budget this week", '
+                  '"Extra from gift money".',
+            },
+          },
+          'required': ['amount'],
+        },
+      });
     }
 
     return tools;

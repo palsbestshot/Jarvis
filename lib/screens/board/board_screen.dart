@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,7 +14,10 @@ import '../../models/task.dart';
 import '../../models/thought.dart';
 import '../../models/goal.dart';
 import '../../models/finance.dart';
+import '../../models/budget_doc.dart';
 import '../../providers/finance_provider.dart';
+import '../../providers/budget_provider.dart';
+import '../../providers/chat_provider.dart';
 import '../../models/meal.dart';
 import '../../widgets/add_task_bottom_sheet.dart';
 import '../../widgets/edit_task_bottom_sheet.dart';
@@ -2060,6 +2064,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
   }
 
   Widget _buildFinanceSection(UserProfile user) {
+    // Rakhi (PWA) gets the savings-jar + budget-categories view instead
+    // of Pallav's net-worth / allocation view.
+    if (kIsWeb) return _buildRakhiFinanceSection(user);
     final async = ref.watch(financeEntriesProvider(user.id));
     return async.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -2098,6 +2105,308 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
     );
   }
 
+  // =====================================================================
+  // Rakhi Finance (kIsWeb path)
+  // Savings-jar hero + monthly budget categories + Jarvis nudge pill.
+  // Reads users/rakhi/finance/{yyyy-MM} via budgetDocProvider.
+  // =====================================================================
+
+  Widget _buildRakhiFinanceSection(UserProfile user) {
+    final async = ref.watch(budgetDocProvider(user.id));
+    final doc = async.maybeWhen(
+      data: (d) => d,
+      orElse: () => BudgetDoc.empty(),
+    );
+    final now = DateTime.now();
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    final subtitle = now.day <= 15
+        ? "Half the month ahead — you're doing beautifully."
+        : "Half the month gone — you're doing beautifully.";
+    return ListView(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      children: [
+        Text(
+          monthNames[now.month - 1],
+          style: const TextStyle(
+            fontFamily: 'InstrumentSerif',
+            fontSize: 32,
+            color: JarvisTheme.rakhiAccentDeep,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          style: JarvisTheme.bodySmall.copyWith(
+            color: JarvisTheme.textSecondary,
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 18),
+        _buildSavingsJarHero(user, doc.jar),
+        const SizedBox(height: 20),
+        _buildBudgetCategories(doc.categories),
+        const SizedBox(height: 18),
+        _buildJarvisNudgePill(user, doc),
+      ],
+    );
+  }
+
+  Widget _buildSavingsJarHero(UserProfile user, JarState jar) {
+    final currentStr = _formatInr(jar.current);
+    final recent = jar.recentAddAmount;
+    final recentNote = jar.recentAddNote;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFD47BA0), Color(0xFFE6A2BD)],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFD47BA0).withOpacity(0.35),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'HER OWN MONEY · SAVINGS JAR',
+            style: TextStyle(
+              fontFamily: 'DMSans',
+              fontSize: 10,
+              letterSpacing: 1.4,
+              fontWeight: FontWeight.w600,
+              color: Colors.white.withOpacity(0.85),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            currentStr,
+            style: const TextStyle(
+              fontFamily: 'InstrumentSerif',
+              fontSize: 34,
+              color: Colors.white,
+            ),
+          ),
+          if (recent != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              recentNote != null && recentNote.isNotEmpty
+                  ? 'Last added ₹$recent — $recentNote'
+                  : 'Last added ₹$recent',
+              style: TextStyle(
+                fontFamily: 'DMSans',
+                fontSize: 12,
+                color: Colors.white.withOpacity(0.9),
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: Stack(
+              children: [
+                Container(
+                  height: 6,
+                  color: Colors.white.withOpacity(0.3),
+                ),
+                FractionallySizedBox(
+                  widthFactor: jar.progress,
+                  child: Container(height: 6, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Goal · ${_formatInr(jar.goal)} — ${jar.goalName}',
+            style: TextStyle(
+              fontFamily: 'DMSans',
+              fontSize: 11,
+              color: Colors.white.withOpacity(0.85),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBudgetCategories(List<BudgetCategory> categories) {
+    const colors = {
+      'kitchen': Color(0xFFD47BA0),
+      'kabir': Color(0xFFC99BB8),
+      'home': Color(0xFFE5B4B0),
+      'personal': Color(0xFFF4DCA6),
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < categories.length; i++) ...[
+          _buildBudgetRow(
+            categories[i],
+            colors[categories[i].id] ?? const Color(0xFFD47BA0),
+          ),
+          if (i != categories.length - 1) const SizedBox(height: 14),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildBudgetRow(BudgetCategory cat, Color color) {
+    final spentStr = _formatInr(cat.spent);
+    final budgetStr = _formatInr(cat.budget);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Text(
+                cat.label,
+                style: JarvisTheme.bodyMedium.copyWith(
+                  color: JarvisTheme.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Text(
+              spentStr,
+              style: const TextStyle(
+                fontFamily: 'InstrumentSerif',
+                fontSize: 16,
+                color: JarvisTheme.rakhiAccentDeep,
+              ),
+            ),
+            Text(
+              ' / $budgetStr',
+              style: JarvisTheme.bodySmall.copyWith(
+                color: JarvisTheme.textMuted,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Stack(
+            children: [
+              Container(height: 8, color: JarvisTheme.surface2),
+              FractionallySizedBox(
+                widthFactor: cat.progress,
+                child: Container(height: 8, color: color),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          cat.over
+              ? '⚠ over budget'
+              : cat.warn
+                  ? '⚠ close to budget'
+                  : cat.budget == 0
+                      ? 'not set'
+                      : 'on track',
+          style: TextStyle(
+            fontFamily: 'DMSans',
+            fontSize: 10,
+            color: cat.warn || cat.over
+                ? const Color(0xFFB35A3C)
+                : JarvisTheme.textMuted,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildJarvisNudgePill(UserProfile user, BudgetDoc doc) {
+    // Pick a context-aware nudge. Prefer a category that's close to
+    // budget but not over; fall back to a generic "add to jar" line.
+    final warn = doc.categories.firstWhere(
+      (c) => c.warn,
+      orElse: () => const BudgetCategory(
+          id: '_none', label: '', spent: 0, budget: 0),
+    );
+    final String quote;
+    final String chatMessage;
+    if (warn.id != '_none') {
+      quote =
+          'Kitchen is close to budget — want me to move ₹500 into your jar so you stay on track?';
+      chatMessage = 'Move ₹500 to my savings jar.';
+    } else if (doc.jar.current < doc.jar.goal) {
+      quote =
+          'You could move ₹500 into your savings jar today — you are doing beautifully.';
+      chatMessage = 'Move ₹500 to my savings jar.';
+    } else {
+      quote = 'You hit your goal — want to raise the jar by ₹5,000?';
+      chatMessage = 'Raise my savings jar goal by ₹5,000.';
+    }
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => _dispatchNudgeChat(chatMessage),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: JarvisTheme.surface2,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('💡', style: TextStyle(fontSize: 22)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                quote,
+                style: const TextStyle(
+                  fontFamily: 'DMSans',
+                  fontSize: 13,
+                  color: JarvisTheme.rakhiAccentDeep,
+                  fontStyle: FontStyle.italic,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _dispatchNudgeChat(String message) async {
+    // Switch to the Chat tab first so the response lands somewhere
+    // visible, then fire the message through chatProvider.
+    widget.onSwitchToChat?.call();
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    // ignore: unused_result
+    ref.read(chatProvider.notifier).sendMessage(message, 'text');
+  }
+
   Widget _buildNetWorthHero(UserProfile user, NetWorthSnapshot snap) {
     final accent = user.accentColor;
     final totalStr = _formatInr(snap.total);
@@ -2126,7 +2435,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
           const SizedBox(height: 6),
           Text(
             totalStr,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'InstrumentSerif',
               fontSize: 34,
               color: JarvisTheme.textPrimary,
@@ -2239,7 +2548,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
           children: [
             Text(
               _formatInr(b.amount),
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'InstrumentSerif',
                 fontSize: 18,
                 color: JarvisTheme.textPrimary,
@@ -2277,7 +2586,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
       children: [
         Text(
           '${monthNames[now.month - 1]} entries',
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'InstrumentSerif',
             fontSize: 22,
             color: JarvisTheme.textPrimary,
@@ -2305,7 +2614,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
     ];
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(color: JarvisTheme.surface2, width: 1),
         ),
@@ -2319,7 +2628,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
               children: [
                 Text(
                   dayNum,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'InstrumentSerif',
                     fontSize: 20,
                     color: JarvisTheme.textPrimary,
@@ -2363,7 +2672,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
           ),
           Text(
             _formatInr(e.amount),
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'InstrumentSerif',
               fontSize: 18,
               color: JarvisTheme.textPrimary,
@@ -2392,7 +2701,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
     }
   }
 
-  String _formatInr(double amount) {
+  String _formatInr(num amount) {
     final rounded = amount.round();
     if (rounded == 0) return '₹ 0';
     final s = rounded.abs().toString();

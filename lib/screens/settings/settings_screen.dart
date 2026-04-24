@@ -9,26 +9,30 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart' as fc;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/constants.dart';
 import '../../core/people_directory.dart';
 import '../../core/theme.dart';
 import '../../models/user_profile.dart';
+import '../../providers/avatar_emoji_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../services/notification_service.dart';
+import '../../widgets/avatar_picker_sheet.dart';
 import '../../widgets/call_followup_sheet.dart';
+import '../../widgets/user_avatar.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   final UserProfile user;
 
   const SettingsScreen({super.key, required this.user});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final FirestoreService _svc = FirestoreService();
   bool _sendingTestPush = false;
   bool _registeringToken = false;
@@ -65,6 +69,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           JarvisTheme.xxl,
         ),
         children: [
+          _buildAvatarRow(),
+          const SizedBox(height: JarvisTheme.md),
           Text(
             'Profile',
             style: JarvisTheme.headingMedium
@@ -220,6 +226,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             JarvisTheme.xxl,
           ),
           children: [
+            _buildAvatarRow(),
+            const SizedBox(height: JarvisTheme.md),
             _sectionHeader('People → Phone'),
             _sectionHelp(
               'Map each person Jarvis knows to a phone from your address book. '
@@ -237,6 +245,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildAvatarRow() {
+    final emoji = ref.watch(avatarEmojiProvider(widget.user.id)).valueOrNull;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => showAvatarPickerSheet(
+        context: context,
+        user: widget.user,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: JarvisTheme.surface,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            UserAvatar(user: widget.user, size: 48),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your face',
+                    style: JarvisTheme.bodyLarge
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    emoji != null
+                        ? 'Tap to change · $emoji'
+                        : 'Tap to pick an emoji for your top bar',
+                    style: JarvisTheme.bodySmall
+                        .copyWith(color: JarvisTheme.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right,
+                color: JarvisTheme.textMuted, size: 20),
+          ],
+        ),
+      ),
     );
   }
 

@@ -13,6 +13,7 @@ import '../../models/task.dart';
 import '../../models/thought.dart';
 import '../../models/goal.dart';
 import '../../models/finance.dart';
+import '../../providers/finance_provider.dart';
 import '../../models/meal.dart';
 import '../../widgets/add_task_bottom_sheet.dart';
 import '../../widgets/edit_task_bottom_sheet.dart';
@@ -2059,124 +2060,359 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
   }
 
   Widget _buildFinanceSection(UserProfile user) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.id)
-          .collection('finance')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        
-        final financeEntries = snapshot.data!.docs;
-        
-        if (financeEntries.isEmpty) {
-          return _buildFinanceEmptyState();
-        }
-        
-        return ListView.builder(
+    final async = ref.watch(financeEntriesProvider(user.id));
+    return async.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => _buildFinanceEmptyState(),
+      data: (entries) {
+        if (entries.isEmpty) return _buildFinanceEmptyState();
+        final snap = ref.watch(netWorthSnapshotProvider(user.id));
+        final now = DateTime.now();
+        final monthStart = DateTime(now.year, now.month, 1);
+        final monthEntries =
+            entries.where((e) => !e.date.isBefore(monthStart)).toList();
+        return ListView(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          itemCount: financeEntries.length,
-          itemBuilder: (context, index) {
-            final entry = financeEntries[index];
-            final data = entry.data() as Map<String, dynamic>;
-            return _buildFinanceCard(user, data);
-          },
+          children: [
+            _buildNetWorthHero(user, snap),
+            const SizedBox(height: 16),
+            _buildAllocationList(user, snap),
+            const SizedBox(height: 20),
+            _buildMonthEntriesHeader(now),
+            const SizedBox(height: 8),
+            if (monthEntries.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Text(
+                  'No entries this month yet.',
+                  style: JarvisTheme.bodySmall
+                      .copyWith(color: JarvisTheme.textMuted),
+                ),
+              )
+            else
+              for (final e in monthEntries.take(8)) _buildEntryRow(user, e),
+          ],
         );
       },
     );
   }
 
-  Widget _buildFinanceCard(UserProfile user, Map<String, dynamic> data) {
-    final title = data['title'] ?? 'Untitled';
-    final value = data['value']?.toString() ?? '0';
-    final category = data['category']?.toString();
-    final updatedDate = data['updated_at']?.toString();
-    
-    Color categoryColor;
-    switch (category) {
-      case 'Gold':
-        categoryColor = const Color(0xFFFFD700);
-        break;
-      case 'Stocks':
-        categoryColor = const Color(0xFF4CAF50);
-        break;
-      case 'MF':
-        categoryColor = const Color(0xFF2196F3);
-        break;
-      case 'Savings':
-      default:
-        categoryColor = user.accentColor;
-    }
-    
+  Widget _buildNetWorthHero(UserProfile user, NetWorthSnapshot snap) {
+    final accent = user.accentColor;
+    final totalStr = _formatInr(snap.total);
+    final deltaStr = snap.deltaPct >= 0
+        ? '▲ ${snap.deltaPct.toStringAsFixed(1)}% MoM'
+        : '▼ ${snap.deltaPct.abs().toStringAsFixed(1)}% MoM';
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: JarvisTheme.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: JarvisTheme.surface2, width: 1),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Finance details
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: JarvisTheme.bodyMedium.copyWith(
-                    color: JarvisTheme.textPrimary,
-                  ),
-                ),
-                
-                const SizedBox(height: 4),
-                
-                if (category != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: categoryColor.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      category,
-                      style: JarvisTheme.bodySmall.copyWith(
-                        color: categoryColor,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ),
-                
-                if (updatedDate != null)
-                  const SizedBox(height: 4),
-                
-                if (updatedDate != null)
-                  Text(
-                    AppUtils.formatDate(updatedDate),
-                    style: JarvisTheme.bodySmall.copyWith(
-                      color: JarvisTheme.textMuted,
-                    ),
-                  ),
-              ],
+          Text(
+            'NET WORTH · LIQUID',
+            style: JarvisTheme.bodySmall.copyWith(
+              color: JarvisTheme.textMuted,
+              fontSize: 11,
+              letterSpacing: 1.2,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          
-          const SizedBox(width: 12),
-          
-          // Value
+          const SizedBox(height: 6),
           Text(
-            '₹$value',
-            style: JarvisTheme.bodyLarge.copyWith(
-              color: user.accentColor,
+            totalStr,
+            style: const TextStyle(
+              fontFamily: 'InstrumentSerif',
+              fontSize: 34,
+              color: JarvisTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            deltaStr,
+            style: TextStyle(
+              fontFamily: 'DMSans',
+              fontSize: 12,
+              color: accent,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _buildStackedAllocationBar(snap),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 56,
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: _SparklinePainter(
+                values: snap.sparkline,
+                color: accent,
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildStackedAllocationBar(NetWorthSnapshot snap) {
+    if (snap.total == 0) {
+      return Container(
+        height: 8,
+        decoration: BoxDecoration(
+          color: JarvisTheme.surface2,
+          borderRadius: BorderRadius.circular(4),
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: SizedBox(
+        height: 8,
+        child: Row(
+          children: [
+            for (final b in snap.allocation)
+              Expanded(
+                flex: (b.percent * 100).round().clamp(1, 10000),
+                child: Container(
+                  color: _allocationColor(b.category),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAllocationList(UserProfile user, NetWorthSnapshot snap) {
+    if (snap.allocation.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: JarvisTheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: JarvisTheme.surface2, width: 1),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < snap.allocation.length; i++) ...[
+            _buildAllocationRow(user, snap.allocation[i]),
+            if (i != snap.allocation.length - 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Container(height: 1, color: JarvisTheme.surface2),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAllocationRow(UserProfile user, AllocationBucket b) {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 34,
+          decoration: BoxDecoration(
+            color: _allocationColor(b.category),
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            b.category,
+            style: JarvisTheme.bodyMedium.copyWith(
+              color: JarvisTheme.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              _formatInr(b.amount),
+              style: const TextStyle(
+                fontFamily: 'InstrumentSerif',
+                fontSize: 18,
+                color: JarvisTheme.textPrimary,
+              ),
+            ),
+            Text(
+              '${b.percent.toStringAsFixed(1)}%',
+              style: JarvisTheme.bodySmall.copyWith(
+                color: JarvisTheme.textMuted,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMonthEntriesHeader(DateTime now) {
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return Row(
+      children: [
+        Text(
+          '${monthNames[now.month - 1]} entries',
+          style: const TextStyle(
+            fontFamily: 'InstrumentSerif',
+            fontSize: 22,
+            color: JarvisTheme.textPrimary,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEntryRow(UserProfile user, Finance e) {
+    final dayNum = e.date.day.toString().padLeft(2, '0');
+    const monShort = [
+      'JAN',
+      'FEB',
+      'MAR',
+      'APR',
+      'MAY',
+      'JUN',
+      'JUL',
+      'AUG',
+      'SEP',
+      'OCT',
+      'NOV',
+      'DEC'
+    ];
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: JarvisTheme.surface2, width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 38,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  dayNum,
+                  style: const TextStyle(
+                    fontFamily: 'InstrumentSerif',
+                    fontSize: 20,
+                    color: JarvisTheme.textPrimary,
+                  ),
+                ),
+                Text(
+                  monShort[e.date.month - 1],
+                  style: JarvisTheme.bodySmall.copyWith(
+                    color: JarvisTheme.textMuted,
+                    fontSize: 10,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  e.description.isEmpty ? 'Entry' : e.description,
+                  style: JarvisTheme.bodyMedium.copyWith(
+                    color: JarvisTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  e.category.toUpperCase(),
+                  style: TextStyle(
+                    fontFamily: 'DMSans',
+                    fontSize: 10,
+                    color: user.accentColor,
+                    letterSpacing: 1,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            _formatInr(e.amount),
+            style: const TextStyle(
+              fontFamily: 'InstrumentSerif',
+              fontSize: 18,
+              color: JarvisTheme.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _allocationColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'gold':
+        return const Color(0xFFFFD700);
+      case 'stocks':
+      case 'stock':
+        return const Color(0xFF4CAF50);
+      case 'mf':
+      case 'mutualfund':
+      case 'mutual fund':
+        return const Color(0xFF2196F3);
+      case 'savings':
+        return const Color(0xFFE8A045);
+      default:
+        return JarvisTheme.textSecondary;
+    }
+  }
+
+  String _formatInr(double amount) {
+    final rounded = amount.round();
+    if (rounded == 0) return '₹ 0';
+    final s = rounded.abs().toString();
+    // Indian grouping: last 3 digits, then groups of 2.
+    String withCommas;
+    if (s.length <= 3) {
+      withCommas = s;
+    } else {
+      final last3 = s.substring(s.length - 3);
+      final rest = s.substring(0, s.length - 3);
+      final buf = StringBuffer();
+      for (var i = 0; i < rest.length; i++) {
+        buf.write(rest[i]);
+        final remaining = rest.length - 1 - i;
+        if (remaining > 0 && remaining % 2 == 0) buf.write(',');
+      }
+      withCommas = '$buf,$last3';
+    }
+    final sign = rounded < 0 ? '-' : '';
+    return '$sign₹ $withCommas';
   }
 
   Widget _buildGoalsSection(UserProfile user) {
@@ -3467,4 +3703,53 @@ class _HeroRingPainter extends CustomPainter {
       old.progress != progress ||
       old.color != color ||
       old.strokeWidth != strokeWidth;
+}
+
+class _SparklinePainter extends CustomPainter {
+  final List<double> values;
+  final Color color;
+
+  _SparklinePainter({required this.values, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2) return;
+    final minV = values.reduce((a, b) => a < b ? a : b);
+    final maxV = values.reduce((a, b) => a > b ? a : b);
+    final range = (maxV - minV).abs() < 0.01 ? 1.0 : (maxV - minV);
+    final dx = size.width / (values.length - 1);
+    final path = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x = i * dx;
+      final y = size.height - ((values[i] - minV) / range) * size.height;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final fillPath = Path.from(path)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(
+      fillPath,
+      Paint()..color = color.withOpacity(0.14),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round,
+    );
+    final lastX = (values.length - 1) * dx;
+    final lastY = size.height - ((values.last - minV) / range) * size.height;
+    canvas.drawCircle(Offset(lastX, lastY), 3, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklinePainter old) =>
+      old.values != values || old.color != color;
 }

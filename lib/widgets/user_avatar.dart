@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme.dart';
 import '../models/user_profile.dart';
+import '../providers/avatar_emoji_provider.dart';
 
-class UserAvatar extends StatelessWidget {
+class UserAvatar extends ConsumerWidget {
   final UserProfile user;
   final double size;
   final bool showRing;
@@ -15,7 +17,8 @@ class UserAvatar extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final emoji = ref.watch(avatarEmojiProvider(user.id)).valueOrNull;
     return Container(
       width: size,
       height: size,
@@ -30,15 +33,20 @@ class UserAvatar extends StatelessWidget {
             : null,
       ),
       child: Center(
-        child: Text(
-          user.name[0].toUpperCase(),
-          style: TextStyle(
-            fontFamily: 'InstrumentSerif',
-            fontSize: size * 0.5,
-            fontWeight: FontWeight.w400,
-            color: user.accentColor,
-          ),
-        ),
+        child: emoji != null
+            ? Text(
+                emoji,
+                style: TextStyle(fontSize: size * 0.55),
+              )
+            : Text(
+                user.name[0].toUpperCase(),
+                style: TextStyle(
+                  fontFamily: 'InstrumentSerif',
+                  fontSize: size * 0.5,
+                  fontWeight: FontWeight.w400,
+                  color: user.accentColor,
+                ),
+              ),
       ),
     );
   }

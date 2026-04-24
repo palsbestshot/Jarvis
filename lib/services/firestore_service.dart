@@ -1207,10 +1207,89 @@ class FirestoreService {
   Future<Map<String, dynamic>> getRecentData(String userId) async {
     final tasks = await getTasks(userId);
     final thoughts = await getThoughts(userId);
-    
+
     return {
       'tasks': tasks.take(5).toList(), // Last 5 tasks
       'thoughts': thoughts.take(5).toList(), // Last 5 thoughts
     };
+  }
+
+  // =====================================================================
+  // Avatar emoji — top-bar profile pill. Set via the Settings picker,
+  // streamed by avatarEmojiProvider so Home/Finance/Settings all update
+  // live. Stored on users/{userId} doc directly (not in a subcollection).
+  // =====================================================================
+
+  Future<void> setAvatarEmoji(String userId, String emoji) async {
+    await _userDoc(userId).set(
+      {'avatar_emoji': emoji},
+      SetOptions(merge: true),
+    );
+  }
+
+  Stream<String?> avatarEmojiStream(String userId) {
+    return _userDoc(userId).snapshots().map((snap) {
+      final data = snap.data();
+      if (data == null) return null;
+      final e = data['avatar_emoji'];
+      if (e is String && e.isNotEmpty) return e;
+      return null;
+    });
+  }
+
+  // =====================================================================
+  // Rakhi finance — savings jar + monthly budget doc.
+  //   users/{userId}/finance/{yyyy-MM} → { budgets: {category: {spent,
+  //   budget}}, jar: {current, goal, goalName, recentAdd: {amount, note,
+  //   at}} }
+  // The doc is seeded lazily — first call may return null.
+  // =====================================================================
+
+  Stream<Map<String, dynamic>?> budgetStream(String userId, String monthKey) {
+    return _userCollection(userId, AppConstants.financeCollection)
+        .doc(monthKey)
+        .snapshots()
+        .map((snap) => snap.data());
+  }
+
+  /// Adds [amount] to the current month's savings jar. Note is stored
+  /// on `recentAdd` so the Finance UI can show "Last added ₹X — note".
+  Future<void> moveSavings(
+    String userId,
+    int amount, {
+    String note = 'Jarvis nudge',
+  }) async {
+    final now = DateTime.now();
+    final monthKey =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    final ref = _userCollection(userId, AppConstants.financeCollection)
+        .doc(monthKey);
+
+    await _firestore.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      final data = snap.data() ?? <String, dynamic>{};
+      final jar =
+          (data['jar'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+      final current = (jar['current'] is num)
+          ? (jar['current'] as num).toInt()
+          : 0;
+      final next = current + amount;
+
+      final newJar = {
+        ...jar,
+        'current': next,
+        'recentAdd': {
+          'amount': amount,
+          'note': note,
+          'at': FieldValue.serverTimestamp(),
+        },
+      };
+
+      tx.set(
+        ref,
+        {'jar': newJar, 'updated_at': FieldValue.serverTimestamp()},
+        SetOptions(merge: true),
+      );
+    });
   }
 }

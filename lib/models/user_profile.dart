@@ -7,6 +7,10 @@ class UserProfile {
   final String ttsVoice; // "nova" | "echo"
   final String personalityType;
   final List<String> boardSections;
+  // Default emoji for the top-bar avatar. Set via the avatar picker sheet
+  // in Settings; the live value is read from Firestore users/{id}.avatar_emoji
+  // and overrides this default at runtime (see avatarEmojiProvider).
+  final String? avatarEmoji;
 
   const UserProfile({
     required this.id,
@@ -15,6 +19,7 @@ class UserProfile {
     required this.ttsVoice,
     required this.personalityType,
     required this.boardSections,
+    this.avatarEmoji,
   });
 
   Color get accentColor {

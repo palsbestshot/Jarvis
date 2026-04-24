@@ -75,6 +75,10 @@ class Dish {
   /// true = Rakhi added it, false = shipped in the seed.
   final bool isCustom;
   final DateTime? createdAt;
+  /// Optional thumbnail URL resolved via DishImageService (Openverse +
+  /// Wikipedia fallback) and cached in Firestore. Null = picker renders
+  /// the emoji placeholder card.
+  final String? imageUrl;
 
   const Dish({
     required this.id,
@@ -88,6 +92,7 @@ class Dish {
     this.timesUsed = 0,
     this.isCustom = false,
     this.createdAt,
+    this.imageUrl,
   });
 
   factory Dish.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -117,6 +122,7 @@ class Dish {
       createdAt: (m['created_at'] is Timestamp)
           ? (m['created_at'] as Timestamp).toDate()
           : null,
+      imageUrl: m['image_url']?.toString(),
     );
   }
 
@@ -131,6 +137,7 @@ class Dish {
       if (notes != null && notes!.isNotEmpty) 'notes': notes,
       'times_used': timesUsed,
       'is_custom': isCustom,
+      if (imageUrl != null && imageUrl!.isNotEmpty) 'image_url': imageUrl,
     };
   }
 
@@ -144,6 +151,7 @@ class Dish {
     String? notes,
     int? timesUsed,
     bool? isCustom,
+    String? imageUrl,
   }) {
     return Dish(
       id: id,
@@ -157,6 +165,7 @@ class Dish {
       timesUsed: timesUsed ?? this.timesUsed,
       isCustom: isCustom ?? this.isCustom,
       createdAt: createdAt,
+      imageUrl: imageUrl ?? this.imageUrl,
     );
   }
 }

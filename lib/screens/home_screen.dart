@@ -14,6 +14,9 @@ import '../widgets/jarvis_logo.dart';
 import '../widgets/user_avatar.dart';
 import '../providers/auth_provider.dart';
 import '../providers/widget_action_provider.dart';
+import '../providers/notification_action_provider.dart';
+import '../providers/notification_service_provider.dart';
+import '../providers/app_lifecycle_provider.dart';
 import '../services/home_widget_service.dart';
 import '../services/notification_service.dart';
 import '../models/user_profile.dart';
@@ -42,7 +45,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _notificationService = NotificationService();
+    // Instantiate through the provider so chat_provider and any other
+    // code that needs a ref to NotificationService gets the same instance.
+    _notificationService = ref.read(notificationServiceProvider);
     _pageController = PageController();
     _screens = [
       ChatScreen(
@@ -159,6 +164,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Mirror the lifecycle into a provider so chat_provider can check
+    // whether we're backgrounded without needing its own observer.
+    ref.read(appLifecycleProvider.notifier).state = state;
+
     if (state == AppLifecycleState.resumed) {
       // Poll the queue briefly after resume. onNewIntent runs slightly
       // before AppLifecycleState.resumed fires, so drain a few times
@@ -289,7 +298,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void dispose() {
     _resumeDrainTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _notificationService.dispose();
+    // NotificationService is disposed by its provider (ref.onDispose),
+    // so we must NOT dispose it here — doing so double-cancels the
+    // internal subscriptions.
     _pageController.dispose();
     _widgetClickSub?.cancel();
     _isRoseMode.removeListener(_onRoseModeChanged);
@@ -322,6 +333,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(activeUserProvider);
+
+    // React to a notification tap by switching to the chat tab. Per product
+    // decision every notification (task reminder, chat reply, briefing)
+    // lands on Jarvis chat, so we don't branch on the action value yet.
+    ref.listen<String?>(notificationActionProvider, (prev, next) {
+      if (next == null) return;
+      _onItemTapped(0);
+      // Clear so a second identical tap still fires the listener.
+      Future.microtask(() {
+        if (!mounted) return;
+        ref.read(notificationActionProvider.notifier).state = null;
+      });
+    });
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -651,61 +675,182 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      barrierColor: const Color(0x66000000),
       transitionAnimationController: AnimationController(
-        duration: const Duration(milliseconds: 250),
+        duration: const Duration(milliseconds: 220),
         vsync: this,
       ),
-      builder: (context) {
-        return Container(
-          margin: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: JarvisTheme.surface2,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'Jump to Section',
-                  style: JarvisTheme.bodyLarge.copyWith(
-                    color: JarvisTheme.textPrimary,
-                    fontWeight: FontWeight.w600,
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 72),
+          child: Container(
+            decoration: BoxDecoration(
+              color: JarvisTheme.surface2,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x66000000),
+                  blurRadius: 28,
+                  offset: Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Jump to section',
+                              style: TextStyle(
+                                fontFamily: 'InstrumentSerif',
+                                fontSize: 18,
+                                color: JarvisTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Long press any tab to switch',
+                              style: TextStyle(
+                                fontFamily: 'DMSans',
+                                fontSize: 11,
+                                color: JarvisTheme.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              ...sections.asMap().entries.map((entry) {
-                final sectionIndex = entry.key;
-                final section = entry.value;
-                final isCurrentSection = sectionIndex == currentIndex;
-                return ListTile(
-                  leading: _getSectionIcon(section),
-                  title: Text(
-                    section,
-                    style: JarvisTheme.bodyMedium.copyWith(
-                      color: isCurrentSection ? accentColor : JarvisTheme.textPrimary,
-                      fontWeight: isCurrentSection ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                  trailing: isCurrentSection
-                      ? Icon(Icons.circle, size: 8, color: accentColor)
-                      : null,
-                  tileColor: isCurrentSection ? accentColor.withOpacity(0.08) : null,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _boardSectionIndex.value = sectionIndex;
-                    _onItemTapped(1);
-                  },
-                );
-              }).toList(),
-              const SizedBox(height: 8),
-            ],
+                const SizedBox(height: 6),
+                ...sections.asMap().entries.map((entry) {
+                  final sectionIndex = entry.key;
+                  final section = entry.value;
+                  final isActive = sectionIndex == currentIndex;
+                  return _buildSectionMenuRow(
+                    name: section,
+                    subtitle: _sectionSubtitle(section),
+                    icon: _getSectionIconData(section),
+                    accent: accentColor,
+                    isActive: isActive,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _boardSectionIndex.value = sectionIndex;
+                      _onItemTapped(1);
+                    },
+                  );
+                }),
+                const SizedBox(height: 10),
+              ],
+            ),
           ),
         );
       },
     );
+  }
+
+  Widget _buildSectionMenuRow({
+    required String name,
+    required String subtitle,
+    required IconData icon,
+    required Color accent,
+    required bool isActive,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        decoration: BoxDecoration(
+          color: isActive ? accent.withOpacity(0.14) : null,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: isActive ? accent : JarvisTheme.surface3,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                size: 18,
+                color: isActive
+                    ? const Color(0xFF2A1C0A)
+                    : JarvisTheme.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 14,
+                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                      color: isActive ? accent : JarvisTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 11,
+                      color: JarvisTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isActive)
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _sectionSubtitle(String section) {
+    switch (section) {
+      case 'Tasks':
+        return 'Today\'s checklist';
+      case 'Time':
+        return 'Daily visits & hours';
+      case 'Habits':
+        return 'Daily streaks';
+      case 'Thoughts':
+        return 'Captured notes';
+      case 'Finance':
+        return 'Net worth · entries';
+      case 'Goals':
+        return 'Roadmap progress';
+      case 'Meals':
+        return 'Plans & dishes';
+      default:
+        return '';
+    }
   }
 
   Icon _getSectionIcon(String section) {

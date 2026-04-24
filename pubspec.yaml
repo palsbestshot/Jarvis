@@ -1,7 +1,7 @@
 ﻿name: jarvis
 description: JARVIS v2 â€” Personal AI Assistant
 publish_to: 'none'
-version: 1.0.0+8
+version: 1.0.0+11
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -57,6 +57,16 @@ dependencies:
 
   # Android home-screen widget â€” shows today's task progress + tap-to-open.
   home_widget: ^0.6.0
+
+  # Share sheet â€” used by the Time section's CSV export so visits can be
+  # emailed, pushed to Drive, or pasted into a CRM.
+  share_plus: ^10.0.0
+
+  # Dish thumbnails - Rakhi's Meals picker renders a 2-col grid of dish
+  # cards; each card shows a picture from Openverse/Wikipedia (see
+  # dish_image_service.dart). CachedNetworkImage handles memory +
+  # on-disk caching so the picker stays smooth even on slow networks.
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:

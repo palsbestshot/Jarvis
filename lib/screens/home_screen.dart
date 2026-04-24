@@ -33,7 +33,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   int _selectedIndex = 0;
   late NotificationService _notificationService;
   late PageController _pageController;
-  final ValueNotifier<bool> _isRoseMode = ValueNotifier(false);
   final ValueNotifier<int> _boardSectionIndex = ValueNotifier(0);
   StreamSubscription<Uri?>? _widgetClickSub;
   late List<Widget> _screens;
@@ -46,15 +45,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     _notificationService = ref.read(notificationServiceProvider);
     _pageController = PageController();
     _screens = [
-      ChatScreen(
-        isRoseModeNotifier: _isRoseMode,
-      ),
+      const ChatScreen(),
       BoardScreen(
         sectionNotifier: _boardSectionIndex,
         onSwitchToChat: () => _onItemTapped(0),
       ),
     ];
-    _isRoseMode.addListener(_onRoseModeChanged);
     _boardSectionIndex.addListener(_onBoardSectionChanged);
     // Subscribe to AppLifecycleState changes so we can drain the widget
     // URI queue whenever the app returns to the foreground (warm-start
@@ -204,10 +200,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
-  void _onRoseModeChanged() {
-    if (mounted) setState(() {});
-  }
-
   void _onBoardSectionChanged() {
     if (mounted) setState(() {});
   }
@@ -221,9 +213,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // internal subscriptions.
     _pageController.dispose();
     _widgetClickSub?.cancel();
-    _isRoseMode.removeListener(_onRoseModeChanged);
     _boardSectionIndex.removeListener(_onBoardSectionChanged);
-    _isRoseMode.dispose();
     _boardSectionIndex.dispose();
     super.dispose();
   }
@@ -433,19 +423,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget _buildChatNavItem(UserProfile? user) {
     final accentColor = user?.accentColor ?? JarvisTheme.pallavAccent;
     final isActive = _selectedIndex == 0;
-    final isRakhi = user?.id == 'rakhi';
-    final chatIcon = (isRakhi && _isRoseMode.value)
-        ? Icons.smart_toy
-        : Icons.chat_bubble_outline;
-    final chatLabel = (isRakhi && _isRoseMode.value) ? 'ROSE' : 'Chat';
+    const chatIcon = Icons.chat_bubble_outline;
+    const chatLabel = 'Chat';
 
     return GestureDetector(
       onTap: () => _onItemTapped(0),
-      onLongPress: isRakhi
-          ? () {
-              _isRoseMode.value = !_isRoseMode.value;
-            }
-          : null,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8),
         constraints: const BoxConstraints(minHeight: 60),

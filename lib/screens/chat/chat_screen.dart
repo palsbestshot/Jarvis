@@ -9,40 +9,29 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/chat_provider.dart';
-import '../../providers/agent_provider.dart';
 import '../../providers/widget_action_provider.dart';
 import '../../services/audio_service.dart';
 import '../../services/firestore_service.dart';
 import '../../models/chat_message.dart';
-import '../../models/agent_response.dart';
 import '../../models/user_profile.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
-  final ValueNotifier<bool>? isRoseModeNotifier;
   // Widget deep-link handling moved to widgetActionProvider (Riverpod
   // StateProvider) — ChatScreen watches it in build() and reacts whenever
   // a 'chat' or 'voice' action is set by HomeScreen. The old pattern
   // (ValueNotifier<int> signals passed down the tree) was fragile because
   // the bump could happen before ChatScreen was listening.
-  const ChatScreen({
-    super.key,
-    this.isRoseModeNotifier,
-  });
+  const ChatScreen({super.key});
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-enum ChatMode { chat, agent }
-
 class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
-  
-  // Chat mode state
-  ChatMode _currentMode = ChatMode.chat;
-  
+
   // Typing animation
   late AnimationController _typingAnimationController;
   late Animation<double> _typingAnimation;
@@ -116,9 +105,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       }
     });
 
-    // Listen to rose mode changes from home screen
-    widget.isRoseModeNotifier?.addListener(_onRoseModeChanged);
-
     // Catch any widget action that was set before this ChatScreen was
     // built (cold-start race). ref.listen only fires on changes after
     // registration, so we need to check the current value too.
@@ -135,14 +121,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     // Initialize audio recorder
     print('DEBUG: initRecorder called');
     _initAudioRecorder();
-  }
-
-  void _onRoseModeChanged() {
-    setState(() {
-      _currentMode = (widget.isRoseModeNotifier?.value ?? false)
-          ? ChatMode.agent
-          : ChatMode.chat;
-    });
   }
 
   // Pop up the keyboard and focus the text field. Called when the user
@@ -190,7 +168,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
   @override
   void dispose() {
-    widget.isRoseModeNotifier?.removeListener(_onRoseModeChanged);
     _inputFocusNode.dispose();
     _textController.dispose();
     _scrollController.dispose();
@@ -229,15 +206,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     final text = _textController.text.trim();
     if (text.isEmpty) return;
 
-    if (_currentMode == ChatMode.chat) {
-      ref.read(chatProvider.notifier).sendMessage(text, 'text');
-    } else {
-      final user = ref.read(activeUserProvider);
-      if (user != null) {
-        ref.read(agentNotifierProvider(user).notifier).sendMessage(text);
-      }
-    }
-    
+    ref.read(chatProvider.notifier).sendMessage(text, 'text');
+
     _textController.clear();
     _scrollToBottom();
   }
@@ -962,81 +932,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     }
   }
 
-  Widget _buildAgentMessageBubble(AgentChatMessage message, UserProfile user) {
-    final accentColor = user.accentColor;
-    final isUser = message.role == 'user';
-    final time = DateFormat('h:mm a').format(message.timestamp);
-
-    // Bubble styling
-    Color backgroundColor;
-    Color borderColor;
-    BorderRadius borderRadius;
-    Alignment alignment;
-
-    if (isUser) {
-      backgroundColor = JarvisTheme.surface2;
-      borderColor = accentColor.withOpacity(0.2);
-      borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(20),
-        topRight: Radius.circular(20),
-        bottomLeft: Radius.circular(20),
-        bottomRight: Radius.circular(4),
-      );
-      alignment = Alignment.centerRight;
-    } else {
-      backgroundColor = JarvisTheme.surface;
-      borderColor = Colors.transparent;
-      borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(4),
-        topRight: Radius.circular(20),
-        bottomLeft: Radius.circular(20),
-        bottomRight: Radius.circular(20),
-      );
-      alignment = Alignment.centerLeft;
-    }
-
-    return Align(
-      alignment: alignment,
-      child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.8,
-        ),
-        margin: const EdgeInsets.symmetric(
-          vertical: JarvisTheme.xs,
-          horizontal: JarvisTheme.md,
-        ),
-        padding: const EdgeInsets.all(JarvisTheme.md),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          border: Border.all(
-            color: borderColor,
-            width: 1.5,
-          ),
-          borderRadius: borderRadius,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              message.content,
-              style: JarvisTheme.bodyMedium.copyWith(
-                color: JarvisTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: JarvisTheme.xs),
-            Text(
-              time,
-              style: JarvisTheme.bodySmall.copyWith(
-                color: JarvisTheme.textMuted,
-                fontSize: 10,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildTypingIndicator(UserProfile user) {
     return Align(
       alignment: Alignment.centerLeft,
@@ -1261,9 +1156,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
   Widget _buildNormalInputBar(UserProfile user) {
     final hasText = _textController.text.isNotEmpty;
-    final hintText = _currentMode == ChatMode.agent
-        ? 'Ask ROSE to do something...'
-        : _placeholderHints[_currentHintIndex];
+    final hintText = _placeholderHints[_currentHintIndex];
 
     return SafeArea(
       child: Padding(
@@ -1321,15 +1214,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 ),
                 const SizedBox(width: 6),
 
-                // Camera button (chat mode only) - 36x36 surface3 bg
-                if (_currentMode == ChatMode.chat)
-                  _buildActionBtn(
-                    onPressed: _pickImage,
-                    icon: Icons.camera_alt_outlined,
-                    bg: JarvisTheme.surface3,
-                    iconColor: JarvisTheme.textSecondary,
-                  ),
-                if (_currentMode == ChatMode.chat) const SizedBox(width: 6),
+                // Camera button - 36x36 surface3 bg
+                _buildActionBtn(
+                  onPressed: _pickImage,
+                  icon: Icons.camera_alt_outlined,
+                  bg: JarvisTheme.surface3,
+                  iconColor: JarvisTheme.textSecondary,
+                ),
+                const SizedBox(width: 6),
 
                 // Send / Mic — Send shows when hasText, else mic
                 AnimatedSwitcher(
@@ -1398,112 +1290,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     }
   }
 
-  Widget _buildModeSwitcher(UserProfile user) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // Chat mode pill
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              setState(() {
-                _currentMode = ChatMode.chat;
-              });
-              widget.isRoseModeNotifier?.value = false;
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: _currentMode == ChatMode.chat
-                      ? user.accentColor
-                      : JarvisTheme.surface2,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'Chat',
-                  style: JarvisTheme.bodyMedium.copyWith(
-                    color: _currentMode == ChatMode.chat
-                        ? Colors.white
-                        : JarvisTheme.textSecondary,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // ROSE mode pill
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              setState(() {
-                _currentMode = ChatMode.agent;
-              });
-              widget.isRoseModeNotifier?.value = true;
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: _currentMode == ChatMode.agent
-                      ? user.accentColor
-                      : JarvisTheme.surface2,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'ROSE',
-                  style: JarvisTheme.bodyMedium.copyWith(
-                    color: _currentMode == ChatMode.agent
-                        ? Colors.white
-                        : JarvisTheme.textSecondary,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAgentModeBanner(UserProfile user) {
-    if (_currentMode != ChatMode.agent) return const SizedBox();
-    
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: user.accentColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: user.accentColor.withOpacity(0.3),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.smart_toy_outlined,
-            color: user.accentColor,
-            size: 16,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'ROSE mode — GPT-4o with web search',
-            style: JarvisTheme.bodySmall.copyWith(
-              color: user.accentColor,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context); // AutomaticKeepAliveClientMixin
@@ -1527,7 +1313,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
     final user = ref.watch(activeUserProvider);
     final chatState = ref.watch(chatProvider);
-    final agentState = user != null ? ref.watch(agentNotifierProvider(user)) : null;
 
     if (user == null) {
       return const Scaffold(
@@ -1538,16 +1323,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       );
     }
 
-    final bool isRoseMode = _currentMode == ChatMode.agent;
-    
-    // Get messages as dynamic list - no casting
-    final List<dynamic> displayMessages = isRoseMode
-      ? (agentState?.messages ?? [])
-      : chatState.messages;
-    
-    final isLoading = isRoseMode
-      ? agentState?.isLoading ?? false
-      : chatState.isLoading;
+    final messages = chatState.messages;
+    final isLoading = chatState.isLoading;
 
     return Scaffold(
       backgroundColor: JarvisTheme.background,
@@ -1555,13 +1332,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
         bottom: true,
         child: Column(
           children: [
-            // Mode switcher (only shown when not driven by home nav notifier)
-            if (widget.isRoseModeNotifier == null)
-              _buildModeSwitcher(user),
-
-            // Agent mode banner
-            _buildAgentModeBanner(user),
-            
             // Messages list
             Expanded(
               child: ListView.builder(
@@ -1571,28 +1341,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                   top: 8,
                   bottom: 8,
                 ),
-                itemCount: displayMessages.length + (isLoading ? 1 : 0),
+                itemCount: messages.length + (isLoading ? 1 : 0),
                 itemBuilder: (context, index) {
                   if (index == 0 && isLoading) {
                     return _buildTypingIndicator(user);
                   }
-                  
+
                   final messageIndex = isLoading ? index - 1 : index;
-                  final dynamic message = displayMessages[messageIndex];
-                  
-                  Widget bubble;
-                  if (message is ChatMessage) {
-                    bubble = _buildMessageBubble(message, user);
-                  } else if (message is AgentChatMessage) {
-                    bubble = _buildAgentMessageBubble(message, user);
-                  } else {
-                    return const SizedBox.shrink();
-                  }
+                  final message = messages[messageIndex];
+                  final bubble = _buildMessageBubble(message, user);
                   // Slide-in animation for newest message (index 0 or 1 when loading)
                   final isNewest = messageIndex == 0;
                   if (isNewest) {
                     return TweenAnimationBuilder<double>(
-                      key: ValueKey(message is ChatMessage ? message.id : (message as AgentChatMessage).id),
+                      key: ValueKey(message.id),
                       tween: Tween(begin: 24.0, end: 0.0),
                       duration: const Duration(milliseconds: 250),
                       curve: Curves.easeOut,

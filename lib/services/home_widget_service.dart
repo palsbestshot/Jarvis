@@ -21,6 +21,15 @@ class HomeWidgetService {
   static const _kTotal = 'tasks_total';
   static const _kDateLabel = 'tasks_date_label';
   static const _kFeedback = 'feedback_message';
+  static const _kChatHint = 'widget_chat_hint';
+  static const _kMicHint = 'widget_mic_hint';
+
+  static const List<String> _chatHints = [
+    'Tap to message…',
+    'What would Jarvis do?',
+    'Ask me anything, sir.',
+    'Running the board quietly…',
+  ];
 
   /// Cached current counts so feedback revert doesn't need to re-query.
   static int _lastDone = 0;
@@ -41,9 +50,13 @@ class HomeWidgetService {
     _lastTotal = total;
     try {
       final today = DateFormat('EEE, d MMM').format(DateTime.now());
+      final hint = _chatHints[
+          DateTime.now().millisecondsSinceEpoch ~/ 60000 % _chatHints.length];
       await HomeWidget.saveWidgetData<int>(_kDone, done);
       await HomeWidget.saveWidgetData<int>(_kTotal, total);
       await HomeWidget.saveWidgetData<String>(_kDateLabel, today);
+      await HomeWidget.saveWidgetData<String>(_kChatHint, hint);
+      await HomeWidget.saveWidgetData<String>(_kMicHint, '🎙️');
       await HomeWidget.updateWidget(
         name: _androidWidgetName,
         androidName: _androidWidgetName,

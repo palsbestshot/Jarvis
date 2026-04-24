@@ -368,33 +368,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     Alignment alignment;
 
     if (isUser) {
-      backgroundColor = JarvisTheme.surface2;
-      borderColor = accentColor.withOpacity(0.2);
+      backgroundColor = JarvisTheme.pallavAccentSoft;
+      borderColor = JarvisTheme.pallavAccentBorder;
       borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(20),
-        topRight: Radius.circular(20),
-        bottomLeft: Radius.circular(20),
+        topLeft: Radius.circular(16),
+        topRight: Radius.circular(16),
+        bottomLeft: Radius.circular(16),
         bottomRight: Radius.circular(4),
       );
       alignment = Alignment.centerRight;
     } else if (isToolResult) {
       backgroundColor = JarvisTheme.surface;
-      borderColor = Colors.transparent;
+      borderColor = JarvisTheme.surface2;
       borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(4),
-        topRight: Radius.circular(20),
-        bottomLeft: Radius.circular(20),
-        bottomRight: Radius.circular(20),
+        topLeft: Radius.circular(16),
+        topRight: Radius.circular(16),
+        bottomLeft: Radius.circular(4),
+        bottomRight: Radius.circular(16),
       );
       alignment = Alignment.centerLeft;
     } else {
       backgroundColor = JarvisTheme.surface;
-      borderColor = Colors.transparent;
+      borderColor = JarvisTheme.surface2;
       borderRadius = const BorderRadius.only(
-        topLeft: Radius.circular(4),
-        topRight: Radius.circular(20),
-        bottomLeft: Radius.circular(20),
-        bottomRight: Radius.circular(20),
+        topLeft: Radius.circular(16),
+        topRight: Radius.circular(16),
+        bottomLeft: Radius.circular(4),
+        bottomRight: Radius.circular(16),
       );
       alignment = Alignment.centerLeft;
     }
@@ -414,7 +414,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           color: backgroundColor,
           border: Border.all(
             color: borderColor,
-            width: 1.5,
+            width: 1,
           ),
           borderRadius: borderRadius,
         ),
@@ -451,9 +451,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             const SizedBox(height: JarvisTheme.xs),
             Text(
               time,
-              style: JarvisTheme.bodySmall.copyWith(
+              style: TextStyle(
+                fontFamily: 'DMSans',
                 color: JarvisTheme.textMuted,
-                fontSize: 10,
+                fontSize: 11,
+                letterSpacing: 1.2,
               ),
             ),
           ],
@@ -1140,6 +1142,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     );
   }
 
+  Widget _buildActionBtn({
+    Key? key,
+    required VoidCallback? onPressed,
+    required IconData icon,
+    required Color bg,
+    required Color iconColor,
+  }) {
+    return Material(
+      key: key,
+      color: bg,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(icon, color: iconColor, size: 18),
+        ),
+      ),
+    );
+  }
+
   Widget _buildRecordingInputBar(UserProfile user) {
     return SafeArea(
       child: Padding(
@@ -1255,12 +1280,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           ),
           child: Container(
             padding: const EdgeInsets.symmetric(
-              horizontal: JarvisTheme.md,
-              vertical: JarvisTheme.sm,
+              horizontal: 12,
+              vertical: 6,
             ),
             decoration: BoxDecoration(
               color: JarvisTheme.surface2,
-              borderRadius: BorderRadius.circular(50),
+              borderRadius: BorderRadius.circular(24),
               border: Border.all(
                 color: JarvisTheme.surface2,
                 width: 1,
@@ -1282,7 +1307,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                         color: JarvisTheme.textMuted,
                       ),
                       border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 6),
                     ),
                     maxLines: 4,
                     minLines: 1,
@@ -1294,59 +1319,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                     },
                   ),
                 ),
-                const SizedBox(width: JarvisTheme.sm),
+                const SizedBox(width: 6),
 
-                // Send button with scale animation (only when typing)
+                // Camera button (chat mode only) - 36x36 surface3 bg
+                if (_currentMode == ChatMode.chat)
+                  _buildActionBtn(
+                    onPressed: _pickImage,
+                    icon: Icons.camera_alt_outlined,
+                    bg: JarvisTheme.surface3,
+                    iconColor: JarvisTheme.textSecondary,
+                  ),
+                if (_currentMode == ChatMode.chat) const SizedBox(width: 6),
+
+                // Send / Mic — Send shows when hasText, else mic
                 AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
+                  duration: const Duration(milliseconds: 180),
                   transitionBuilder: (child, animation) => ScaleTransition(
                     scale: animation,
                     child: child,
                   ),
                   child: hasText
-                      ? SizedBox(
+                      ? _buildActionBtn(
                           key: const ValueKey('send'),
-                          width: 48,
-                          height: 48,
-                          child: IconButton(
-                            onPressed: _sendMessage,
-                            icon: Icon(
-                              Icons.send,
-                              color: user.accentColor,
-                              size: 24,
-                            ),
-                          ),
+                          onPressed: _sendMessage,
+                          icon: Icons.arrow_upward_rounded,
+                          bg: user.accentColor,
+                          iconColor: const Color(0xFF2A1C0A),
                         )
-                      : const SizedBox.shrink(key: ValueKey('no_send')),
-                ),
-
-                // Camera button (chat mode only)
-                if (_currentMode == ChatMode.chat)
-                  SizedBox(
-                    width: 48,
-                    height: 48,
-                    child: IconButton(
-                      onPressed: _pickImage,
-                      icon: Icon(
-                        Icons.camera_alt_outlined,
-                        color: user.accentColor,
-                        size: 24,
-                      ),
-                    ),
-                  ),
-
-                // Mic button
-                SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: IconButton(
-                    onPressed: _isRecording ? null : _startRecording,
-                    icon: Icon(
-                      Icons.mic,
-                      color: user.accentColor,
-                      size: 24,
-                    ),
-                  ),
+                      : _buildActionBtn(
+                          key: const ValueKey('mic'),
+                          onPressed: _isRecording ? null : _startRecording,
+                          icon: Icons.mic,
+                          bg: JarvisTheme.surface3,
+                          iconColor: JarvisTheme.textSecondary,
+                        ),
                 ),
               ],
             ),

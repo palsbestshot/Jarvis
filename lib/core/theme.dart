@@ -5,6 +5,9 @@ class JarvisTheme {
   static const Color background = Color(0xFF0A0906);
   static const Color surface = Color(0xFF111009);
   static const Color surface2 = Color(0xFF181512);
+  // Slightly lighter than surface2 — used for Pallav widget internals
+  // (mic bg, ring inner), input pill, filter-pill rest state.
+  static const Color surface3 = Color(0xFF221D17);
   static const Color textPrimary = Color(0xFFF5F0E8);
   static const Color textSecondary = Color(0xFFA89880);
   static const Color textMuted = Color(0xFF6B5C4A);
@@ -12,6 +15,18 @@ class JarvisTheme {
   // User Accents
   static const Color pallavAccent = Color(0xFFE8A045);
   static const Color rakhiAccent = Color(0xFFD47BA0);
+  // Soft accent washes for pill backgrounds / active-row fills.
+  static const Color pallavAccentSoft = Color(0x24E8A045); // ~0.14 alpha
+  static const Color pallavAccentBorder = Color(0x66E8A045);
+  static const Color rakhiAccentDeep = Color(0xFF6D2D4C);
+  static const Color rakhiBg = Color(0xFFFFF5F8);
+  static const Color rakhiSurface = Color(0xFFFFFFFF);
+  static const Color rakhiSurface2 = Color(0xFFF9D6E2);
+  static const Color rakhiSurface3 = Color(0xFFF4C4D4);
+  static const Color rakhiTextPrimary = Color(0xFF3A1A2A);
+  static const Color rakhiTextSecondary = Color(0xFF8A5670);
+  static const Color rakhiTextMuted = Color(0xFFB78CA0);
+  static const Color rakhiAccentSoft = Color(0x24D47BA0);
 
   // Confirmation/status text — readable on dark backgrounds
   static const Color confirmText = Color(0xFFFFF5E1);

@@ -433,14 +433,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget _buildChatNavItem(UserProfile? user) {
     final accentColor = user?.accentColor ?? JarvisTheme.pallavAccent;
     final isActive = _selectedIndex == 0;
-    final chatIcon = _isRoseMode.value ? Icons.smart_toy : Icons.chat_bubble_outline;
-    final chatLabel = _isRoseMode.value ? 'ROSE' : 'Chat';
+    final isRakhi = user?.id == 'rakhi';
+    final chatIcon = (isRakhi && _isRoseMode.value)
+        ? Icons.smart_toy
+        : Icons.chat_bubble_outline;
+    final chatLabel = (isRakhi && _isRoseMode.value) ? 'ROSE' : 'Chat';
 
     return GestureDetector(
       onTap: () => _onItemTapped(0),
-      onLongPress: () {
-        _isRoseMode.value = !_isRoseMode.value;
-      },
+      onLongPress: isRakhi
+          ? () {
+              _isRoseMode.value = !_isRoseMode.value;
+            }
+          : null,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8),
         constraints: const BoxConstraints(minHeight: 60),
@@ -605,14 +610,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      barrierColor: const Color(0x66000000),
+      barrierColor: const Color(0x22000000),
       transitionAnimationController: AnimationController(
         duration: const Duration(milliseconds: 220),
         vsync: this,
       ),
       builder: (ctx) {
+        final bottomNavHeight = 72.0 + MediaQuery.of(ctx).padding.bottom + 12.0;
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 72),
+          padding: EdgeInsets.fromLTRB(16, 0, 16, bottomNavHeight),
           child: Container(
             decoration: BoxDecoration(
               color: JarvisTheme.surface2,

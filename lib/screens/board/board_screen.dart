@@ -1916,6 +1916,28 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
             children: [
               for (int i = 0; i < 7; i++) ...[
                 Expanded(
+                  child: Center(
+                    child: Text(
+                      const ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i],
+                      style: TextStyle(
+                        fontFamily: 'DMSans',
+                        fontSize: 10,
+                        letterSpacing: 0.5,
+                        color: JarvisTheme.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                if (i < 6) const SizedBox(width: 6),
+              ],
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              for (int i = 0; i < 7; i++) ...[
+                Expanded(
                   child: _buildHabitWeekCell(
                     user: user,
                     habitId: habitId,
@@ -3573,6 +3595,10 @@ class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _timeController = TextEditingController();
   String _selectedFrequency = AppConstants.recurringFrequencies.first;
+  // Mon=1..Sun=7 (Dart DateTime.weekday convention). Default: today.
+  final Set<int> _repeatDays = <int>{DateTime.now().weekday};
+  // Day of month 1..31. Default: today.
+  int _repeatDate = DateTime.now().day;
   bool _isSubmitting = false;
 
   @override
@@ -3592,12 +3618,20 @@ class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
     setState(() => _isSubmitting = true);
 
     try {
-      await _firestoreService.createRecurringTask(user.id, {
+      final data = <String, dynamic>{
         'title': title,
         'frequency': _selectedFrequency,
-        'time_of_day': _timeController.text.trim().isEmpty ? null : _timeController.text.trim(),
+        'time_of_day': _timeController.text.trim().isEmpty
+            ? null
+            : _timeController.text.trim(),
         'active': true,
-      });
+      };
+      if (_selectedFrequency == 'weekly') {
+        data['repeat_days'] = _repeatDays.toList()..sort();
+      } else if (_selectedFrequency == 'monthly') {
+        data['repeat_date'] = _repeatDate;
+      }
+      await _firestoreService.createRecurringTask(user.id, data);
       widget.onHabitAdded();
     } catch (e) {
       if (mounted) {
@@ -3696,6 +3730,95 @@ class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
               );
             }).toList(),
           ),
+          if (_selectedFrequency == 'weekly') ...[
+            const SizedBox(height: 12),
+            Text(
+              'Repeat on',
+              style: JarvisTheme.bodySmall.copyWith(color: JarvisTheme.textMuted),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: List.generate(7, (i) {
+                final weekday = i + 1; // Mon=1..Sun=7
+                final label = const ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i];
+                final isSelected = _repeatDays.contains(weekday);
+                return GestureDetector(
+                  onTap: () => setState(() {
+                    if (isSelected) {
+                      if (_repeatDays.length > 1) _repeatDays.remove(weekday);
+                    } else {
+                      _repeatDays.add(weekday);
+                    }
+                  }),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isSelected ? accentColor : JarvisTheme.surface,
+                      border: Border.all(
+                        color: isSelected ? accentColor : JarvisTheme.surface2,
+                      ),
+                    ),
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontFamily: 'DMSans',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? Colors.black : JarvisTheme.textMuted,
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ],
+          if (_selectedFrequency == 'monthly') ...[
+            const SizedBox(height: 12),
+            Text(
+              'Repeat on date',
+              style: JarvisTheme.bodySmall.copyWith(color: JarvisTheme.textMuted),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 40,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: 31,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (ctx, i) {
+                  final day = i + 1;
+                  final isSelected = _repeatDate == day;
+                  return GestureDetector(
+                    onTap: () => setState(() => _repeatDate = day),
+                    child: Container(
+                      width: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: isSelected ? accentColor : JarvisTheme.surface,
+                        border: Border.all(
+                          color: isSelected ? accentColor : JarvisTheme.surface2,
+                        ),
+                      ),
+                      child: Text(
+                        '$day',
+                        style: TextStyle(
+                          fontFamily: 'DMSans',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: isSelected ? Colors.black : JarvisTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           TextField(
             controller: _timeController,

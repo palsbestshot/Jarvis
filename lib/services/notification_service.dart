@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
+import '../providers/notification_action_provider.dart';
 
 class NotificationService {
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
@@ -12,9 +14,10 @@ class NotificationService {
   StreamSubscription? _tokenRefreshSubscription;
   StreamSubscription? _taskSubscription;
   String? _currentUserId;
+  final Ref? _ref;
   static bool _tzInitialized = false;
 
-  NotificationService() {
+  NotificationService({Ref? ref}) : _ref = ref {
     _localNotifications = FlutterLocalNotificationsPlugin();
     _initializeLocalNotifications();
   }
@@ -141,13 +144,42 @@ class NotificationService {
       }
     });
 
-    // Configure onMessageOpenedApp handler
+    // Configure onMessageOpenedApp handler (background → foreground tap)
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       _handleNotificationTap(message.data);
     });
 
+    // Cold-start: app was launched by tapping a notification.
+    final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+    if (initialMessage != null) {
+      _handleNotificationTap(initialMessage.data);
+    }
+
     // Start listening for tasks and scheduling reminders
     _listenForTasks(userId);
+  }
+
+  /// Show an immediate chat-reply notification. Called by chat_provider when
+  /// an assistant reply arrives while the app is backgrounded, so Pallav sees
+  /// "Jarvis replied" on the lock screen instead of having to reopen the app.
+  Future<void> showChatReplyNotification(String body) async {
+    final preview = body.length > 140 ? '${body.substring(0, 137)}...' : body;
+    await _localNotifications.show(
+      20001,
+      'JARVIS replied',
+      preview,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'jarvis_channel',
+          'JARVIS Notifications',
+          channelDescription: 'Reminders and briefings from JARVIS',
+          importance: Importance.max,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+      ),
+      payload: 'chat',
+    );
   }
 
   // ─── Local Task Reminders ──────────────────────────────────────────────────
@@ -354,8 +386,11 @@ class NotificationService {
   }
 
   void _handleNotificationTap(Map<String, dynamic> data) {
+    // Every notification tap routes to Jarvis chat. The 'type' field is
+    // still logged for diagnostics but doesn't change routing.
     final type = data['type'];
-    print('Notification tapped with type: $type');
+    print('Notification tapped (type=$type) → routing to chat');
+    _ref?.read(notificationActionProvider.notifier).state = 'chat';
   }
 
   Future<void> dispose() async {

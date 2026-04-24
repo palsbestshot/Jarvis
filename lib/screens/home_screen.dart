@@ -10,6 +10,9 @@ import '../widgets/jarvis_logo.dart';
 import '../widgets/user_avatar.dart';
 import '../providers/auth_provider.dart';
 import '../providers/widget_action_provider.dart';
+import '../providers/notification_action_provider.dart';
+import '../providers/notification_service_provider.dart';
+import '../providers/app_lifecycle_provider.dart';
 import '../services/home_widget_service.dart';
 import '../services/notification_service.dart';
 import '../models/user_profile.dart';
@@ -38,7 +41,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _notificationService = NotificationService();
+    // Instantiate through the provider so chat_provider and any other
+    // code that needs a ref to NotificationService gets the same instance.
+    _notificationService = ref.read(notificationServiceProvider);
     _pageController = PageController();
     _screens = [
       ChatScreen(
@@ -155,6 +160,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Mirror the lifecycle into a provider so chat_provider can check
+    // whether we're backgrounded without needing its own observer.
+    ref.read(appLifecycleProvider.notifier).state = state;
+
     if (state == AppLifecycleState.resumed) {
       // Poll the queue briefly after resume. onNewIntent runs slightly
       // before AppLifecycleState.resumed fires, so drain a few times
@@ -207,7 +216,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void dispose() {
     _resumeDrainTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _notificationService.dispose();
+    // NotificationService is disposed by its provider (ref.onDispose),
+    // so we must NOT dispose it here — doing so double-cancels the
+    // internal subscriptions.
     _pageController.dispose();
     _widgetClickSub?.cancel();
     _isRoseMode.removeListener(_onRoseModeChanged);
@@ -240,6 +251,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(activeUserProvider);
+
+    // React to a notification tap by switching to the chat tab. Per product
+    // decision every notification (task reminder, chat reply, briefing)
+    // lands on Jarvis chat, so we don't branch on the action value yet.
+    ref.listen<String?>(notificationActionProvider, (prev, next) {
+      if (next == null) return;
+      _onItemTapped(0);
+      // Clear so a second identical tap still fires the listener.
+      Future.microtask(() {
+        if (!mounted) return;
+        ref.read(notificationActionProvider.notifier).state = null;
+      });
+    });
 
     return Scaffold(
       resizeToAvoidBottomInset: true,

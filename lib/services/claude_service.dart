@@ -481,6 +481,38 @@ ${formatThoughts(recentThoughts)}
           'required': ['days_back'],
         },
       });
+      tools.add({
+        'name': 'export_visits',
+        'description':
+            "Export visit logs to a CSV and open the share sheet so Pallav can "
+            "email, Drive-upload, or paste into a CRM. Call when the user says "
+            "'export visits', 'download visits', 'send last month's visits', "
+            "'share visits CSV', etc. Defaults to the last 30 days if no range "
+            "is given.",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'from_date': {
+              'type': 'string',
+              'description':
+                  "ISO date YYYY-MM-DD. Defaults to today minus 30 days.",
+            },
+            'to_date': {
+              'type': 'string',
+              'description': "ISO date YYYY-MM-DD. Defaults to today.",
+            },
+            'contact_type': {
+              'type': 'string',
+              'enum': ['architect', 'consultant', 'builder', 'customer',
+                       'oem', 'channel', 'internal', 'other'],
+              'description':
+                  "Optional filter. Omit to export visits for all contact "
+                  "types.",
+            },
+          },
+          'required': [],
+        },
+      });
     }
 
     // Add meal tool for Rakhi only

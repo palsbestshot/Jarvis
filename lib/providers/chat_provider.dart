@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../core/time_categories.dart';
@@ -8,7 +9,10 @@ import '../services/claude_service.dart';
 import '../services/openai_service.dart';
 import '../services/audio_service.dart';
 import '../services/home_widget_service.dart';
+import '../services/visit_export_service.dart';
 import 'auth_provider.dart';
+import 'app_lifecycle_provider.dart';
+import 'notification_service_provider.dart';
 
 // Chat State
 class ChatState {
@@ -122,6 +126,18 @@ class ChatNotifier extends Notifier<ChatState> {
     }
   }
 
+  /// Fire a local notification for an incoming assistant message, but only
+  /// if the app is backgrounded — otherwise the user is already looking at
+  /// the chat screen and a notification would be noise.
+  void _notifyIfBackgrounded(String body) {
+    final lifecycle = ref.read(appLifecycleProvider);
+    if (lifecycle == AppLifecycleState.resumed) return;
+    if (body.trim().isEmpty) return;
+    // Fire-and-forget — any failure inside the notification plugin
+    // must not block chat send.
+    ref.read(notificationServiceProvider).showChatReplyNotification(body);
+  }
+
   Future<void> sendMessage(String text, String inputType) async {
     final userId = ref.read(activeUserIdProvider);
     final user = ref.read(activeUserProvider);
@@ -193,6 +209,7 @@ class ChatNotifier extends Notifier<ChatState> {
         await _firestoreService.saveChatMessage(userId, userMessage.toFirestore());
         await _firestoreService.saveChatMessage(userId, toolMessage.toFirestore());
         state = state.copyWith(isLoading: false);
+        _notifyIfBackgrounded(toolResult);
       } else if (response.text != null) {
         // Add assistant message
         final assistantMessage = ChatMessage(
@@ -207,6 +224,7 @@ class ChatNotifier extends Notifier<ChatState> {
         await _firestoreService.saveChatMessage(userId, userMessage.toFirestore());
         await _firestoreService.saveChatMessage(userId, assistantMessage.toFirestore());
         state = state.copyWith(isLoading: false);
+        _notifyIfBackgrounded(response.text!);
       } else {
         throw Exception('No response from Claude');
       }
@@ -348,10 +366,15 @@ class ChatNotifier extends Notifier<ChatState> {
         throw Exception('No response from Claude');
       }
 
+      // Fire a local notification if the app is backgrounded so Pallav
+      // sees the reply even though TTS auto-play won't be audible in the
+      // background on all devices.
+      _notifyIfBackgrounded(assistantResponseText);
+
       // 5. Generate TTS audio from assistant response
       if (assistantResponseText.isNotEmpty) {
         final audioBytes = await openAIService.generateSpeech(assistantResponseText, user.ttsVoice);
-        
+
         // 6. Auto-play the TTS audio
         await audioService.playFromBytes(audioBytes);
       }
@@ -584,6 +607,45 @@ class ChatNotifier extends Notifier<ChatState> {
         );
         final label = kind == 'visit' ? 'Visit logged' : 'Time logged';
         return '✓ $label — ${hours}h $activity';
+
+      case 'export_visits':
+        // Parse optional date params with sensible defaults so Pallav can
+        // say "export visits" and get last-30-days for free.
+        DateTime parseYmd(String? s, DateTime fallback) {
+          if (s == null || s.trim().isEmpty) return fallback;
+          try {
+            final parts = s.trim().split('-');
+            if (parts.length != 3) return fallback;
+            return DateTime(
+              int.parse(parts[0]),
+              int.parse(parts[1]),
+              int.parse(parts[2]),
+            );
+          } catch (_) {
+            return fallback;
+          }
+        }
+
+        final today = DateTime.now();
+        final todayOnly = DateTime(today.year, today.month, today.day);
+        final to = parseYmd(toolInput['to_date']?.toString(), todayOnly);
+        final from = parseYmd(
+          toolInput['from_date']?.toString(),
+          to.subtract(const Duration(days: 30)),
+        );
+        final contactType = toolInput['contact_type']?.toString();
+
+        final result = await VisitExportService().exportAndShare(
+          userId: userId,
+          from: from,
+          to: to,
+          contactType: contactType,
+        );
+        if (result.count == 0) {
+          return 'No visits between ${result.fromKey} and ${result.toKey}.';
+        }
+        return '✓ Shared ${result.count} visit${result.count == 1 ? '' : 's'} '
+            'from ${result.fromKey} to ${result.toKey}.';
 
       case 'report_bug':
         // Store the user's verbatim text as the source of truth. Claude's

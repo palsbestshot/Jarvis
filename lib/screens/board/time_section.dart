@@ -12,6 +12,7 @@ import '../../core/time_categories.dart';
 import '../../models/time_log.dart';
 import '../../models/user_profile.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/export_visits_sheet.dart';
 import '../../widgets/log_time_sheet.dart';
 
 enum TimeRange { day, week, month }
@@ -163,6 +164,32 @@ class _TimeSectionState extends State<TimeSection> {
         chip(TimeRange.week, 'Last 7 days'),
         const SizedBox(width: 6),
         chip(TimeRange.month, 'Last 30 days'),
+        const SizedBox(width: 6),
+        InkWell(
+          onTap: () => showExportVisitsSheet(
+            context: context,
+            user: widget.user,
+          ),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: JarvisTheme.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: JarvisTheme.surface2,
+                width: 0.8,
+              ),
+            ),
+            child: Icon(
+              Icons.ios_share,
+              size: 16,
+              color: accent,
+            ),
+          ),
+        ),
       ],
     );
   }

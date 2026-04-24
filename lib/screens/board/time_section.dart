@@ -1,9 +1,13 @@
-// Time tracking + visit-log analytics section for the Board.
-// Shows RAG pills (Revenue %, Admin %, Coverage %, Email min), a horizontal
-// stacked bar breakdown by category, per-category bars, and the list of
-// logs for the selected range (day/week/month).
+// Time tracking section for the Board — visual refresh per JARVIS DESIGN
+// handoff (pallav-screens.jsx · PallavTime). Layout:
+//   • range toggle (Today / 7d / 30d) + export icon
+//   • 7-day Mon→Sun vertical bar chart (current week, independent of range)
+//   • summary card: day/range label + Serif 30pt total + stacked cat bar + legend
+//   • RECENT ENTRIES list with 95pt time col + description + accent category
 //
-// Reads time_logs via FirestoreService.streamTimeLogs...
+// Preserves: range-scoped aggregation via FirestoreService.aggregateTimeLogs,
+// swipe-to-delete on each row, Log time / Log visit quick buttons at bottom.
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -28,6 +32,25 @@ class TimeSection extends StatefulWidget {
 class _TimeSectionState extends State<TimeSection> {
   final _svc = FirestoreService();
   TimeRange _range = TimeRange.day;
+
+  static const _weekdayShort = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  static const _weekdayFull = [
+    'MONDAY',
+    'TUESDAY',
+    'WEDNESDAY',
+    'THURSDAY',
+    'FRIDAY',
+    'SATURDAY',
+    'SUNDAY',
+  ];
+
+  DateTime _weekStart() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return today.subtract(Duration(days: today.weekday - 1));
+  }
+
+  DateTime _weekEnd() => _weekStart().add(const Duration(days: 6));
 
   List<String> _rangeKeys() {
     final now = DateTime.now();
@@ -65,68 +88,74 @@ class _TimeSectionState extends State<TimeSection> {
 
   @override
   Widget build(BuildContext context) {
-    final keys = _rangeKeys();
-    final from = keys.first;
-    final to = keys.last;
+    final weekStartKey = FirestoreService.istDateKey(_weekStart());
+    final weekEndKey = FirestoreService.istDateKey(_weekEnd());
     return StreamBuilder<List<TimeLog>>(
-      stream: _range == TimeRange.day
-          ? _svc.streamTimeLogsForDate(widget.user.id, keys.first)
-          : _svc.streamTimeLogsInRange(
-              widget.user.id,
-              fromDateKey: from,
-              toDateKey: to,
-            ),
-      builder: (ctx, snap) {
-        final logs = snap.data ?? const <TimeLog>[];
-        final analytics =
-            _svc.aggregateTimeLogs(logs, _daysInRange());
-        return ListView(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: EdgeInsets.zero,
-          children: [
-            _buildRangeToggle(),
-            const SizedBox(height: 12),
-            _buildHeadline(analytics),
-            const SizedBox(height: 14),
-            _buildRagPills(analytics),
-            const SizedBox(height: 14),
-            _buildStackedBar(analytics),
-            const SizedBox(height: 14),
-            _buildCategoryList(analytics),
-            const SizedBox(height: 18),
-            _buildQuickLogButtons(),
-            const SizedBox(height: 18),
-            _buildLogsListHeader(logs),
-            for (final log in logs.take(_range == TimeRange.day ? 50 : 30))
-              _buildLogTile(log),
-            if (logs.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 30),
-                child: Center(
-                  child: Column(
-                    children: [
-                      Icon(Icons.timer_outlined,
-                          size: 40, color: JarvisTheme.textMuted),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No logs for this range yet.\nTap "Log time" to start.',
-                        style: JarvisTheme.bodySmall
-                            .copyWith(color: JarvisTheme.textMuted),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
+      stream: _svc.streamTimeLogsInRange(
+        widget.user.id,
+        fromDateKey: weekStartKey,
+        toDateKey: weekEndKey,
+      ),
+      builder: (ctx, weekSnap) {
+        final weekLogs = weekSnap.data ?? const <TimeLog>[];
+        final keys = _rangeKeys();
+        return StreamBuilder<List<TimeLog>>(
+          stream: _range == TimeRange.day
+              ? _svc.streamTimeLogsForDate(widget.user.id, keys.first)
+              : _svc.streamTimeLogsInRange(
+                  widget.user.id,
+                  fromDateKey: keys.first,
+                  toDateKey: keys.last,
                 ),
-              ),
-            const SizedBox(height: 40),
-          ],
+          builder: (ctx2, rangeSnap) {
+            final logs = rangeSnap.data ?? const <TimeLog>[];
+            final analytics =
+                _svc.aggregateTimeLogs(logs, _daysInRange());
+            return ListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: EdgeInsets.zero,
+              children: [
+                _buildRangeToggle(),
+                const SizedBox(height: 16),
+                _buildWeekBars(weekLogs),
+                const SizedBox(height: 14),
+                _buildSummaryCard(analytics, weekLogs),
+                const SizedBox(height: 4),
+                _buildRecentHeader(),
+                for (final log in logs.take(_range == TimeRange.day ? 50 : 30))
+                  _buildLogTile(log),
+                if (logs.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 30),
+                    child: Center(
+                      child: Column(
+                        children: [
+                          Icon(Icons.timer_outlined,
+                              size: 40, color: JarvisTheme.textMuted),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No logs for this range yet.\nTap "Log time" to start.',
+                            style: JarvisTheme.bodySmall
+                                .copyWith(color: JarvisTheme.textMuted),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 18),
+                _buildQuickLogButtons(),
+                const SizedBox(height: 40),
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  // ──────────────────────── WIDGETS ────────────────────────────────────────
+  // ──────────────────────── RANGE TOGGLE ───────────────────────────────────
   Widget _buildRangeToggle() {
     final accent = widget.user.accentColor;
     Widget chip(TimeRange r, String label) {
@@ -138,16 +167,20 @@ class _TimeSectionState extends State<TimeSection> {
             padding: const EdgeInsets.symmetric(vertical: 8),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: active ? accent.withOpacity(0.2) : JarvisTheme.surface,
+              color: active ? accent.withOpacity(0.14) : JarvisTheme.surface,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: active ? accent : JarvisTheme.surface2,
+                color: active
+                    ? accent.withOpacity(0.4)
+                    : JarvisTheme.surface2,
                 width: 0.8,
               ),
             ),
             child: Text(
               label,
-              style: JarvisTheme.bodySmall.copyWith(
+              style: TextStyle(
+                fontFamily: 'DMSans',
+                fontSize: 13,
                 color: active ? accent : JarvisTheme.textSecondary,
                 fontWeight: active ? FontWeight.w700 : FontWeight.w500,
               ),
@@ -194,265 +227,426 @@ class _TimeSectionState extends State<TimeSection> {
     );
   }
 
-  Widget _buildHeadline(TimeAnalytics a) {
-    final total = a.totalMin;
-    final expected = _daysInRange() * 600; // 10h/day
-    final logged = _fmtHM(total);
-    final expectedStr = _fmtHM(expected);
+  // ──────────────────────── 7-DAY BARS ─────────────────────────────────────
+  Widget _buildWeekBars(List<TimeLog> weekLogs) {
+    final accent = widget.user.accentColor;
+    final weekStart = _weekStart();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final perDay = List<int>.filled(7, 0);
+    for (final log in weekLogs) {
+      final at = log.startAt;
+      if (at == null) continue;
+      final d = DateTime(at.year, at.month, at.day);
+      final idx = d.difference(weekStart).inDays;
+      if (idx >= 0 && idx < 7) perDay[idx] += log.durationMin;
+    }
+    final maxMin = perDay.fold<int>(0, math.max);
+
+    return Row(
+      children: List.generate(7, (i) {
+        final dayDate = weekStart.add(Duration(days: i));
+        final isToday = dayDate.difference(today).inDays == 0;
+        final mins = perDay[i];
+        final pct = maxMin == 0 ? 0.0 : mins / maxMin;
+        final hours = mins / 60.0;
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(right: i == 6 ? 0 : 6),
+            child: Column(
+              children: [
+                Text(
+                  _weekdayShort[i],
+                  style: const TextStyle(
+                    fontFamily: 'DMSans',
+                    fontSize: 10,
+                    color: JarvisTheme.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  height: 40,
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: JarvisTheme.surface,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: isToday ? accent : JarvisTheme.surface2,
+                      width: 1,
+                    ),
+                  ),
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: FractionallySizedBox(
+                      heightFactor: pct.clamp(0.0, 1.0),
+                      widthFactor: 1.0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isToday ? accent : JarvisTheme.surface3,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${_fmtDec(hours)}h',
+                  style: TextStyle(
+                    fontFamily: 'DMSans',
+                    fontSize: 10,
+                    color: isToday ? accent : JarvisTheme.textSecondary,
+                    fontWeight: isToday ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  // ──────────────────────── SUMMARY CARD ───────────────────────────────────
+  Widget _buildSummaryCard(TimeAnalytics a, List<TimeLog> weekLogs) {
+    final accent = widget.user.accentColor;
+    final totalHours = a.totalMin / 60.0;
+
+    // "Xm vs avg" — only shown in day range, compared to 7-day avg/day.
+    String? trend;
+    if (_range == TimeRange.day && weekLogs.isNotEmpty) {
+      final weekTotal = weekLogs.fold<int>(0, (s, l) => s + l.durationMin);
+      final avgPerDay = weekTotal / 7;
+      final diff = a.totalMin - avgPerDay;
+      if (diff.abs() >= 5) {
+        final mins = diff.abs().round();
+        final h = mins ~/ 60;
+        final m = mins % 60;
+        final str = h > 0
+            ? (m == 0 ? '${h}h' : '${h}h ${m}m')
+            : '${m}m';
+        trend = '${diff >= 0 ? '▲' : '▼'} $str vs avg';
+      }
+    }
+
+    // Stacked segments sorted by magnitude.
+    final segs = <MapEntry<TimeCategory, int>>[];
+    for (final cat in TimeCategories.all) {
+      final m = a.byCategory[cat.id] ?? 0;
+      if (m > 0) segs.add(MapEntry(cat, m));
+    }
+    segs.sort((x, y) => y.value.compareTo(x.value));
+
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: JarvisTheme.surface,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: JarvisTheme.surface2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.timer, color: widget.user.accentColor, size: 18),
-              const SizedBox(width: 6),
-              Text(
-                _rangeLabel(),
-                style: JarvisTheme.bodyLarge
-                    .copyWith(fontWeight: FontWeight.w700),
-              ),
-              const Spacer(),
-              if (a.logCount > 0)
-                Text(
-                  '${a.logCount} log${a.logCount == 1 ? '' : 's'}'
-                  '${a.visitCount > 0 ? ' · ${a.visitCount} visit${a.visitCount == 1 ? '' : 's'}' : ''}',
-                  style: JarvisTheme.bodySmall
-                      .copyWith(color: JarvisTheme.textMuted),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Logged $logged of $expectedStr',
-            style: JarvisTheme.bodyMedium
-                .copyWith(color: JarvisTheme.textSecondary),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRagPills(TimeAnalytics a) {
-    final revenueBand = TimeRagThresholds.higherIsBetter(
-      a.revenuePct,
-      TimeRagThresholds.revenuePctGreen,
-      TimeRagThresholds.revenuePctAmber,
-    );
-    final adminBand = TimeRagThresholds.lowerIsBetter(
-      a.adminPct,
-      TimeRagThresholds.adminPctGreen,
-      TimeRagThresholds.adminPctAmber,
-    );
-    final coverageBand = TimeRagThresholds.higherIsBetter(
-      a.coveragePct,
-      TimeRagThresholds.coveragePctGreen,
-      TimeRagThresholds.coveragePctAmber,
-    );
-    final emailBand = TimeRagThresholds.lowerIsBetter(
-      a.emailMinPerDay,
-      TimeRagThresholds.emailMinGreen,
-      TimeRagThresholds.emailMinAmber,
-    );
-    return Column(
-      children: [
-        _buildPillRow(
-          label: 'Revenue time',
-          value: '${a.revenuePct.toStringAsFixed(0)}%',
-          sub: _fmtHM(a.revenueMin),
-          target: 'target 50%+',
-          band: revenueBand,
-        ),
-        _buildPillRow(
-          label: 'Admin / email / MIS',
-          value: '${a.adminPct.toStringAsFixed(0)}%',
-          sub: _fmtHM(a.adminPlusEmailMin),
-          target: 'target <15%',
-          band: adminBand,
-        ),
-        _buildPillRow(
-          label: 'Day coverage',
-          value: '${a.coveragePct.toStringAsFixed(0)}%',
-          sub: _fmtHM(a.totalMin),
-          target: 'target 85%+',
-          band: coverageBand,
-        ),
-        _buildPillRow(
-          label: 'Email time',
-          value: '${a.emailMinPerDay.toStringAsFixed(0)} min/day',
-          sub: _fmtHM(a.emailMin),
-          target: 'target <20 min',
-          band: emailBand,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPillRow({
-    required String label,
-    required String value,
-    required String sub,
-    required String target,
-    required RagBand band,
-  }) {
-    final color = TimeRagThresholds.colorFor(band);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: JarvisTheme.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border(
-          left: BorderSide(color: color, width: 3),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: JarvisTheme.bodyMedium
-                      .copyWith(fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  '$sub · $target',
-                  style: JarvisTheme.bodySmall
-                      .copyWith(color: JarvisTheme.textMuted),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.22),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: color.withOpacity(0.6), width: 0.8),
-            ),
-            child: Text(
-              value,
-              style: JarvisTheme.bodySmall.copyWith(
-                color: color,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStackedBar(TimeAnalytics a) {
-    if (a.totalMin == 0) return const SizedBox.shrink();
-    final segments = <_BarSeg>[];
-    for (final cat in TimeCategories.all) {
-      final mins = a.byCategory[cat.id] ?? 0;
-      if (mins <= 0) continue;
-      segments.add(_BarSeg(cat: cat, mins: mins));
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Breakdown',
-          style: JarvisTheme.labelMedium
-              .copyWith(color: JarvisTheme.textSecondary, fontSize: 11),
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: Row(
-            children: segments.map((s) {
-              return Expanded(
-                flex: s.mins,
-                child: Tooltip(
-                  message:
-                      '${s.cat.label}: ${_fmtHM(s.mins)} (${(s.mins / a.totalMin * 100).toStringAsFixed(0)}%)',
-                  child: Container(height: 14, color: s.cat.color),
-                ),
-              );
-            }).toList(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCategoryList(TimeAnalytics a) {
-    if (a.totalMin == 0) return const SizedBox.shrink();
-    final sorted = [...TimeCategories.all]..sort((x, y) =>
-        (a.byCategory[y.id] ?? 0).compareTo(a.byCategory[x.id] ?? 0));
-    return Column(
-      children: sorted
-          .where((c) => (a.byCategory[c.id] ?? 0) > 0)
-          .map((c) {
-        final mins = a.byCategory[c.id] ?? 0;
-        final pct = (mins / a.totalMin * 100);
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 22,
-                child: Icon(c.icon, size: 14, color: c.color),
-              ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            c.label,
-                            style: JarvisTheme.bodySmall,
-                          ),
-                        ),
-                        Text(
-                          '${_fmtHM(mins)} · ${pct.toStringAsFixed(0)}%',
-                          style: JarvisTheme.bodySmall.copyWith(
-                            color: JarvisTheme.textMuted,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Container(
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: JarvisTheme.surface2,
-                        borderRadius: BorderRadius.circular(2),
+                    Text(
+                      _summaryLabel(),
+                      style: const TextStyle(
+                        fontFamily: 'DMSans',
+                        fontSize: 11,
+                        color: JarvisTheme.textMuted,
+                        letterSpacing: 0.5,
                       ),
-                      child: FractionallySizedBox(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: (pct / 100).clamp(0.0, 1.0),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: c.color,
-                            borderRadius: BorderRadius.circular(2),
+                    ),
+                    const SizedBox(height: 2),
+                    RichText(
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: _fmtDec(totalHours),
+                            style: const TextStyle(
+                              fontFamily: 'InstrumentSerif',
+                              fontSize: 30,
+                              color: JarvisTheme.textPrimary,
+                            ),
                           ),
-                        ),
+                          const TextSpan(
+                            text: ' h logged',
+                            style: TextStyle(
+                              fontFamily: 'DMSans',
+                              fontSize: 14,
+                              color: JarvisTheme.textSecondary,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
+              if (trend != null)
+                Text(
+                  trend,
+                  style: TextStyle(
+                    fontFamily: 'DMSans',
+                    fontSize: 11,
+                    color: accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
             ],
           ),
-        );
-      }).toList(),
+          if (segs.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(5),
+              child: SizedBox(
+                height: 10,
+                child: Row(
+                  children: segs
+                      .map((e) => Expanded(
+                            flex: e.value,
+                            child: Container(color: e.key.color),
+                          ))
+                      .toList(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Column(
+              children: segs.map((e) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: e.key.color,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          e.key.label,
+                          style: const TextStyle(
+                            fontFamily: 'DMSans',
+                            fontSize: 13,
+                            color: JarvisTheme.textPrimary,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        _fmtHM(e.value),
+                        style: const TextStyle(
+                          fontFamily: 'DMSans',
+                          fontSize: 13,
+                          color: JarvisTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
+  // ──────────────────────── RECENT ENTRIES ─────────────────────────────────
+  Widget _buildRecentHeader() {
+    return const Padding(
+      padding: EdgeInsets.only(top: 14, bottom: 6),
+      child: Text(
+        'RECENT ENTRIES',
+        style: TextStyle(
+          fontFamily: 'DMSans',
+          fontSize: 11,
+          color: JarvisTheme.textMuted,
+          letterSpacing: 1.0,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogTile(TimeLog log) {
+    final cat = TimeCategories.byId(log.categoryId) ?? TimeCategories.admin;
+    final accent = widget.user.accentColor;
+    final desc = log.activity.isNotEmpty ? log.activity : cat.label;
+    final timeStr = _timeRangeText(log);
+
+    // Visit subtitle (e.g. "@ Ravi (Godrej)")
+    String? visitDetail;
+    if (log.isVisit) {
+      final who = log.visitPersonName ?? '';
+      final co = log.visitCompany ?? '';
+      if (who.isNotEmpty || co.isNotEmpty) {
+        visitDetail = who.isNotEmpty
+            ? (co.isNotEmpty ? '@ $who ($co)' : '@ $who')
+            : '@ $co';
+      }
+    }
+
+    return Dismissible(
+      key: ValueKey(log.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        color: Colors.red.withOpacity(0.15),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: const Icon(Icons.delete_outline, color: Colors.red),
+      ),
+      confirmDismiss: (_) async {
+        return await showDialog<bool>(
+              context: context,
+              builder: (c) => AlertDialog(
+                backgroundColor: JarvisTheme.surface,
+                title: Text('Delete log?', style: JarvisTheme.bodyLarge),
+                content: Text(
+                  'Remove "${log.activity}" from the timeline?',
+                  style: JarvisTheme.bodyMedium,
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(c, false),
+                    child: const Text('Cancel'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(c, true),
+                    child: const Text('Delete',
+                        style: TextStyle(color: Colors.red)),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+      },
+      onDismissed: (_) async {
+        await _svc.deleteTimeLog(widget.user.id, log.id);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: const BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: JarvisTheme.surface2, width: 1),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 95,
+              child: Text(
+                timeStr,
+                style: const TextStyle(
+                  fontFamily: 'DMSans',
+                  fontSize: 12,
+                  color: JarvisTheme.textSecondary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    desc,
+                    style: const TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 13,
+                      color: JarvisTheme.textPrimary,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    cat.label,
+                    style: TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 11,
+                      color: accent,
+                    ),
+                  ),
+                  if (visitDetail != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      visitDetail,
+                      style: const TextStyle(
+                        fontFamily: 'DMSans',
+                        fontSize: 11,
+                        color: JarvisTheme.textMuted,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  if (log.isVisit &&
+                      (log.visitNextSteps?.isNotEmpty ?? false)) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.arrow_right_alt, size: 14, color: accent),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(
+                            log.visitNextSteps!,
+                            style: const TextStyle(
+                              fontFamily: 'DMSans',
+                              fontSize: 11,
+                              color: JarvisTheme.textPrimary,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (log.isRevenue)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    'REV',
+                    style: TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 9,
+                      color: Colors.green.shade400,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ──────────────────────── QUICK LOG BUTTONS ──────────────────────────────
   Widget _buildQuickLogButtons() {
     final accent = widget.user.accentColor;
     return Row(
@@ -499,218 +693,34 @@ class _TimeSectionState extends State<TimeSection> {
     );
   }
 
-  Widget _buildLogsListHeader(List<TimeLog> logs) {
-    if (logs.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          Text(
-            'Logs',
-            style: JarvisTheme.labelMedium
-                .copyWith(color: JarvisTheme.textSecondary, fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLogTile(TimeLog log) {
-    final cat = TimeCategories.byId(log.categoryId) ?? TimeCategories.admin;
-    final accent = widget.user.accentColor;
-    return Dismissible(
-      key: ValueKey(log.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        color: Colors.red.withOpacity(0.15),
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: const Icon(Icons.delete_outline, color: Colors.red),
-      ),
-      confirmDismiss: (_) async {
-        return await showDialog<bool>(
-              context: context,
-              builder: (c) => AlertDialog(
-                backgroundColor: JarvisTheme.surface,
-                title:
-                    Text('Delete log?', style: JarvisTheme.bodyLarge),
-                content: Text(
-                  'Remove "${log.activity}" from the timeline?',
-                  style: JarvisTheme.bodyMedium,
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(c, false),
-                    child: const Text('Cancel'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(c, true),
-                    child: const Text('Delete',
-                        style: TextStyle(color: Colors.red)),
-                  ),
-                ],
-              ),
-            ) ??
-            false;
-      },
-      onDismissed: (_) async {
-        await _svc.deleteTimeLog(widget.user.id, log.id);
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: JarvisTheme.surface,
-          borderRadius: BorderRadius.circular(10),
-          border: Border(left: BorderSide(color: cat.color, width: 3)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              log.isVisit ? Icons.place : cat.icon,
-              size: 16,
-              color: cat.color,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          log.activity.isNotEmpty
-                              ? log.activity
-                              : cat.label,
-                          style: JarvisTheme.bodyMedium
-                              .copyWith(fontWeight: FontWeight.w600),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _fmtHM(log.durationMin),
-                        style: JarvisTheme.bodySmall.copyWith(
-                          color: accent,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _logSubtitle(log, cat),
-                    style: JarvisTheme.bodySmall.copyWith(
-                      color: JarvisTheme.textMuted,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (log.isVisit &&
-                      (log.visitDiscussion?.isNotEmpty ?? false)) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      log.visitDiscussion!,
-                      style: JarvisTheme.bodySmall.copyWith(
-                        color: JarvisTheme.textSecondary,
-                        fontStyle: FontStyle.italic,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  if (log.isVisit &&
-                      (log.visitNextSteps?.isNotEmpty ?? false)) ...[
-                    const SizedBox(height: 3),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.arrow_right_alt,
-                            size: 14, color: accent),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                            log.visitNextSteps!,
-                            style: JarvisTheme.bodySmall.copyWith(
-                              color: JarvisTheme.textPrimary,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (log.isRevenue)
-              Padding(
-                padding: const EdgeInsets.only(left: 6),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    'REV',
-                    style: JarvisTheme.bodySmall.copyWith(
-                      color: Colors.green.shade400,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────── UTILS ────────────────────────────────────────
-  String _rangeLabel() {
+  // ──────────────────────── UTILS ──────────────────────────────────────────
+  String _summaryLabel() {
     switch (_range) {
       case TimeRange.day:
-        return 'Today';
+        final now = DateTime.now();
+        return '${_weekdayFull[now.weekday - 1]} · TODAY';
       case TimeRange.week:
-        return 'Last 7 days';
+        return 'LAST 7 DAYS';
       case TimeRange.month:
-        return 'Last 30 days';
+        return 'LAST 30 DAYS';
     }
   }
 
-  String _logSubtitle(TimeLog log, TimeCategory cat) {
-    final parts = <String>[];
-    if (log.isVisit) {
-      final t = VisitContactTypes.byId(log.visitContactType)?.label ?? '';
-      final who = log.visitPersonName ?? '';
-      final co = log.visitCompany ?? '';
-      if (t.isNotEmpty) parts.add(t);
-      if (who.isNotEmpty) {
-        parts.add(co.isNotEmpty ? '$who ($co)' : who);
-      } else if (co.isNotEmpty) {
-        parts.add(co);
-      }
-    } else {
-      parts.add(cat.label);
-      if (log.clientName != null && log.clientName!.isNotEmpty) {
-        parts.add(log.clientName!);
-      }
-    }
+  String _timeRangeText(TimeLog log) {
     final at = log.startAt;
     if (at != null) {
+      final end = at.add(Duration(minutes: log.durationMin));
       String two(int n) => n.toString().padLeft(2, '0');
-      parts.add('${two(at.hour)}:${two(at.minute)}');
+      return '${two(at.hour)}:${two(at.minute)} – ${two(end.hour)}:${two(end.minute)}';
     }
-    return parts.join(' · ');
+    return _fmtHM(log.durationMin);
+  }
+
+  // "5.5" → "5.5", "8.0" → "8", "0.25" → "0.3" (1dp). Matches JSX toFixed(1)
+  // with trailing .0 stripped for cleaner reads at small sizes.
+  static String _fmtDec(double h) {
+    final s = h.toStringAsFixed(1);
+    return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
   }
 
   static String _fmtHM(int m) {
@@ -720,10 +730,4 @@ class _TimeSectionState extends State<TimeSection> {
     final r = m % 60;
     return r == 0 ? '${h}h' : '${h}h ${r}m';
   }
-}
-
-class _BarSeg {
-  final TimeCategory cat;
-  final int mins;
-  _BarSeg({required this.cat, required this.mins});
 }

@@ -3,7 +3,6 @@
 // flows. Pushed from the Goals tab's hero card on board_screen.dart.
 
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
@@ -11,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme.dart';
-import '../../core/utils.dart';
 import '../../models/goal.dart';
 import '../../models/user_profile.dart';
 import '../../services/firestore_service.dart';
@@ -89,6 +87,10 @@ class _RoadmapDetailScreenState extends State<RoadmapDetailScreen> {
       children: [
         _buildHeaderCard(goal, accent),
         const SizedBox(height: JarvisTheme.md),
+        if (goal.phases.isNotEmpty) ...[
+          _buildMilestoneTimeline(goal, accent),
+          const SizedBox(height: JarvisTheme.md),
+        ],
         _buildAttachmentCard(goal, accent),
         const SizedBox(height: JarvisTheme.md),
         ..._buildPhasePanels(goal, accent),
@@ -99,65 +101,330 @@ class _RoadmapDetailScreenState extends State<RoadmapDetailScreen> {
   // ─────────────────────────── HEADER ───────────────────────────────────────
   Widget _buildHeaderCard(Goal goal, Color accent) {
     final progress = goal.overallProgress;
-    final start = goal.startDate;
     final target = goal.targetDate;
-    return Container(
-      padding: const EdgeInsets.all(JarvisTheme.md),
-      decoration: BoxDecoration(
-        color: JarvisTheme.surface,
-        borderRadius: BorderRadius.circular(JarvisTheme.medium),
-      ),
+    final category = _deriveCategory(goal);
+    final weeksLeft = target != null
+        ? (target.difference(DateTime.now()).inDays / 7).ceil()
+        : null;
+    final onTrack = _onTrackLabel(goal);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'ACTIVE · ${category.toUpperCase()}',
+          style: TextStyle(
+            fontFamily: 'DMSans',
+            fontSize: 11,
+            color: accent,
+            letterSpacing: 1.0,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text.rich(
+          TextSpan(children: _splitTitleForEmphasis(goal.title, accent)),
+          style: const TextStyle(
+            fontFamily: 'InstrumentSerif',
+            fontSize: 26,
+            height: 1.2,
+            color: JarvisTheme.textPrimary,
+          ),
+        ),
+        if (goal.description.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            goal.description,
+            style: const TextStyle(
+              fontFamily: 'DMSans',
+              fontSize: 13,
+              color: JarvisTheme.textSecondary,
+              height: 1.5,
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: JarvisTheme.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: JarvisTheme.surface2),
+          ),
+          child: IntrinsicHeight(
+            child: Row(
+              children: [
+                Expanded(
+                  child: _headerStat(
+                    label: 'OVERALL',
+                    value: '${progress.toInt()}',
+                    trailing: '%',
+                  ),
+                ),
+                Container(width: 1, color: JarvisTheme.surface2),
+                Expanded(
+                  child: _headerStat(
+                    label: 'ON TRACK',
+                    value: onTrack,
+                    valueColor: onTrack == 'Yes' ? accent : null,
+                  ),
+                ),
+                Container(width: 1, color: JarvisTheme.surface2),
+                Expanded(
+                  child: _headerStat(
+                    label: 'WEEKS LEFT',
+                    value: weeksLeft == null
+                        ? '—'
+                        : (weeksLeft < 0 ? '0' : '$weeksLeft'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _headerStat({
+    required String label,
+    required String value,
+    String? trailing,
+    Color? valueColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            goal.title,
-            style: JarvisTheme.headingLarge,
+            label,
+            style: const TextStyle(
+              fontFamily: 'DMSans',
+              fontSize: 11,
+              color: JarvisTheme.textMuted,
+            ),
           ),
-          const SizedBox(height: JarvisTheme.xs),
-          Text(
-            [
-              if (start != null) 'Started ${AppUtils.formatDate(start.toIso8601String())}',
-              if (target != null) 'Target ${AppUtils.formatDate(target.toIso8601String())}',
-              '${goal.doneCheckpoints} of ${goal.totalCheckpoints} done',
-            ].join(' · '),
-            style: JarvisTheme.bodySmall
-                .copyWith(color: JarvisTheme.textSecondary),
-          ),
-          const SizedBox(height: JarvisTheme.md),
-          Row(
-            children: [
-              _ProgressRing(
-                progress: progress,
-                color: accent,
-                size: 64,
-                strokeWidth: 7,
+          const SizedBox(height: 2),
+          Text.rich(
+            TextSpan(
+              text: value,
+              style: TextStyle(
+                fontFamily: 'InstrumentSerif',
+                fontSize: 22,
+                color: valueColor ?? JarvisTheme.textPrimary,
               ),
-              const SizedBox(width: JarvisTheme.md),
-              Expanded(
+              children: [
+                if (trailing != null)
+                  const TextSpan(
+                    text: '%',
+                    style: TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 13,
+                      color: JarvisTheme.textMuted,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _deriveCategory(Goal goal) {
+    if (goal.phases.isNotEmpty) {
+      final at = goal.phases.first.automationTarget.trim();
+      if (at.isNotEmpty) return at;
+    }
+    final words = goal.title.trim().split(RegExp(r'\s+'));
+    if (words.length >= 2) return '${words[0]} ${words[1]}';
+    if (words.isNotEmpty) return words.first;
+    return 'ROADMAP';
+  }
+
+  String _onTrackLabel(Goal goal) {
+    final start = goal.startDate;
+    final target = goal.targetDate;
+    if (start == null || target == null) return 'Yes';
+    final now = DateTime.now();
+    final total = target.difference(start).inMilliseconds;
+    if (total <= 0) return goal.overallProgress >= 99 ? 'Yes' : 'Monitor';
+    final elapsed = now.difference(start).inMilliseconds.clamp(0, total);
+    final expected = (elapsed / total) * 100;
+    return goal.overallProgress >= (expected - 10) ? 'Yes' : 'Monitor';
+  }
+
+  List<InlineSpan> _splitTitleForEmphasis(String title, Color accent) {
+    final byRegex = RegExp(r'\s+by\s+', caseSensitive: false);
+    final m = byRegex.firstMatch(title);
+    if (m != null) {
+      final head = title.substring(0, m.end);
+      final tail = title.substring(m.end);
+      if (tail.trim().isNotEmpty) {
+        return [
+          TextSpan(text: head),
+          TextSpan(text: tail, style: TextStyle(color: accent)),
+        ];
+      }
+    }
+    final tokens = title.trim().split(RegExp(r'\s+'));
+    if (tokens.length > 2) {
+      final last = tokens.last;
+      if (RegExp(r"^(Q[1-4].*|'?\d{2,4})$").hasMatch(last)) {
+        final head = tokens.take(tokens.length - 1).join(' ');
+        return [
+          TextSpan(text: '$head '),
+          TextSpan(text: last, style: TextStyle(color: accent)),
+        ];
+      }
+    }
+    return [TextSpan(text: title)];
+  }
+
+  // ─────────────────────────── MILESTONE TIMELINE ───────────────────────────
+  Widget _buildMilestoneTimeline(Goal goal, Color accent) {
+    final curIdx = goal.currentPhaseIndex;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'MILESTONES',
+          style: TextStyle(
+            fontFamily: 'DMSans',
+            fontSize: 11,
+            color: JarvisTheme.textMuted,
+            letterSpacing: 1.0,
+          ),
+        ),
+        const SizedBox(height: 10),
+        for (int i = 0; i < goal.phases.length; i++)
+          _buildMilestoneRow(
+            phase: goal.phases[i],
+            accent: accent,
+            isLast: i == goal.phases.length - 1,
+            state: goal.phases[i].isDone
+                ? 'done'
+                : (i == curIdx ? 'active' : 'pending'),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMilestoneRow({
+    required GoalPhase phase,
+    required Color accent,
+    required bool isLast,
+    required String state,
+  }) {
+    final pct = phase.progress.toInt();
+    final isDone = state == 'done';
+    final isPending = state == 'pending';
+    return IntrinsicHeight(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 14,
+              child: Column(
+                children: [
+                  Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isDone ? accent : Colors.transparent,
+                      border: Border.all(
+                        color: isPending ? JarvisTheme.textMuted : accent,
+                        width: 1.5,
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: isDone
+                        ? const Text(
+                            '✓',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: JarvisTheme.background,
+                              height: 1,
+                            ),
+                          )
+                        : null,
+                  ),
+                  if (!isLast)
+                    Expanded(
+                      child: Container(
+                        width: 1,
+                        color: JarvisTheme.surface2,
+                        margin: const EdgeInsets.only(top: 4),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 4),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${progress.toInt()}% complete',
-                      style: JarvisTheme.bodyLarge
-                          .copyWith(fontWeight: FontWeight.w600),
+                      phase.title,
+                      style: TextStyle(
+                        fontFamily: 'DMSans',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: isPending
+                            ? JarvisTheme.textSecondary
+                            : JarvisTheme.textPrimary,
+                      ),
                     ),
                     const SizedBox(height: 6),
-                    _ProgressBar(progress: progress, color: accent),
-                    const SizedBox(height: 6),
-                    if (goal.currentPhase != null)
-                      Text(
-                        'On Phase ${goal.currentPhaseIndex + 1} · ${goal.currentPhase!.title}',
-                        style: JarvisTheme.bodySmall
-                            .copyWith(color: JarvisTheme.textMuted),
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: JarvisTheme.surface2,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: FractionallySizedBox(
+                              alignment: Alignment.centerLeft,
+                              widthFactor: (pct / 100).clamp(0.0, 1.0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: accent,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 32,
+                          child: Text(
+                            '$pct%',
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              fontFamily: 'DMSans',
+                              fontSize: 11,
+                              color: JarvisTheme.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -727,59 +994,6 @@ class _RoadmapDetailScreenState extends State<RoadmapDetailScreen> {
 }
 
 // ─────────────────────────── REUSABLE WIDGETS ───────────────────────────────
-class _ProgressRing extends StatelessWidget {
-  final double progress; // 0..100
-  final Color color;
-  final double size;
-  final double strokeWidth;
-
-  const _ProgressRing({
-    required this.progress,
-    required this.color,
-    required this.size,
-    this.strokeWidth = 6,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          CustomPaint(
-            size: Size(size, size),
-            painter: _RingPainter(
-              progress: 1,
-              color: JarvisTheme.surface2,
-              strokeWidth: strokeWidth,
-            ),
-          ),
-          if (progress > 0)
-            CustomPaint(
-              size: Size(size, size),
-              painter: _RingPainter(
-                progress: (progress / 100).clamp(0, 1),
-                color: color,
-                strokeWidth: strokeWidth,
-              ),
-            ),
-          Text(
-            '${progress.toInt()}%',
-            style: TextStyle(
-              fontFamily: 'DMSans',
-              fontSize: size * 0.28,
-              fontWeight: FontWeight.w600,
-              color: JarvisTheme.textPrimary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ProgressBar extends StatelessWidget {
   final double progress;
   final Color color;
@@ -808,39 +1022,3 @@ class _ProgressBar extends StatelessWidget {
   }
 }
 
-class _RingPainter extends CustomPainter {
-  final double progress;
-  final Color color;
-  final double strokeWidth;
-
-  _RingPainter({
-    required this.progress,
-    required this.color,
-    required this.strokeWidth,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = (size.width - strokeWidth) / 2;
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-    final sweep = 2 * math.pi * progress;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      -math.pi / 2,
-      sweep,
-      false,
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _RingPainter old) =>
-      old.progress != progress ||
-      old.color != color ||
-      old.strokeWidth != strokeWidth;
-}

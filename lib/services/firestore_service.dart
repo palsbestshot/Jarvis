@@ -469,6 +469,25 @@ class FirestoreService {
     });
   }
 
+  /// Mark a habit as done (or undone) for a given IST date key (yyyy-MM-dd).
+  /// Stores date strings in the `completions` array so we can compute
+  /// streaks + week grid client-side without extra reads.
+  Future<void> toggleHabitCompletion(
+    String userId,
+    String habitId,
+    String dateKey,
+    bool markDone,
+  ) async {
+    final ref = _userCollection(userId, AppConstants.recurringTasksCollection)
+        .doc(habitId);
+    await ref.update({
+      'completions': markDone
+          ? FieldValue.arrayUnion([dateKey])
+          : FieldValue.arrayRemove([dateKey]),
+      'updated_at': FieldValue.serverTimestamp(),
+    });
+  }
+
   // Thoughts
   Future<List<Map<String, dynamic>>> getThoughts(String userId) async {
     final snapshot = await _userCollection(userId, AppConstants.thoughtsCollection)

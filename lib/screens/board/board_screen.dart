@@ -1667,25 +1667,133 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        
+
         final habits = snapshot.data!.docs;
-        
+
         if (habits.isEmpty) {
           return _buildEmptyState('No habits yet. Tap + to create one.');
         }
-        
-        return ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: habits.length,
-          itemBuilder: (context, index) {
-            final habit = habits[index];
-            final data = habit.data() as Map<String, dynamic>;
-            return _buildDismissibleHabitCard(user, habit.id, data);
-          },
+
+        // Only count "active" habits toward today's ring + week view.
+        final activeHabits = habits.where((h) {
+          final d = h.data() as Map<String, dynamic>;
+          return d['active'] != false;
+        }).toList();
+
+        final todayKey = FirestoreService.istDateKey(DateTime.now());
+        final doneToday = activeHabits.where((h) {
+          final d = h.data() as Map<String, dynamic>;
+          final c = (d['completions'] as List?)?.cast<String>() ?? const [];
+          return c.contains(todayKey);
+        }).length;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildHabitsHero(user, doneToday, activeHabits.length),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 10),
+              child: Text(
+                'THIS WEEK · MON → SUN',
+                style: JarvisTheme.bodySmall.copyWith(
+                  color: JarvisTheme.textMuted,
+                  fontSize: 11,
+                  letterSpacing: 1.0,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: activeHabits.length,
+              itemBuilder: (context, index) {
+                final habit = activeHabits[index];
+                final data = habit.data() as Map<String, dynamic>;
+                return _buildDismissibleHabitCard(user, habit.id, data);
+              },
+            ),
+          ],
         );
       },
     );
+  }
+
+  Widget _buildHabitsHero(UserProfile user, int done, int total) {
+    final progress = total > 0 ? done / total : 0.0;
+    final String quip;
+    if (total == 0) {
+      quip = 'No habits yet.';
+    } else if (done == total) {
+      quip = 'Clean sweep — week\'s yours.';
+    } else if (done == total - 1) {
+      quip = 'One more and you seal it.';
+    } else if (done > 0) {
+      quip = '$done down, ${total - done} to go.';
+    } else {
+      quip = 'Fresh slate — start with the easy one.';
+    }
+    final subtitle = total == 0
+        ? 'Add your first habit to start a streak.'
+        : '$total habits today · $done landed.';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: JarvisTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          _HabitRing(
+            progress: progress,
+            done: done,
+            total: total,
+            accent: user.accentColor,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  quip,
+                  style: const TextStyle(
+                    fontFamily: 'InstrumentSerif',
+                    fontSize: 20,
+                    color: JarvisTheme.textPrimary,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: JarvisTheme.bodySmall.copyWith(
+                    color: JarvisTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  int _computeHabitStreak(Set<String> completions) {
+    var streak = 0;
+    var day = DateTime.now();
+    // If today isn't logged, count the streak ending yesterday.
+    if (!completions.contains(FirestoreService.istDateKey(day))) {
+      day = day.subtract(const Duration(days: 1));
+    }
+    while (completions.contains(FirestoreService.istDateKey(day))) {
+      streak++;
+      day = day.subtract(const Duration(days: 1));
+    }
+    return streak;
   }
 
   Widget _buildDismissibleHabitCard(UserProfile user, String habitId, Map<String, dynamic> data) {
@@ -1753,77 +1861,133 @@ class _BoardScreenState extends ConsumerState<BoardScreen> with AutomaticKeepAli
   }
 
   Widget _buildHabitCard(UserProfile user, String habitId, Map<String, dynamic> data) {
-    final isActive = data['active'] ?? false;
-    final frequency = data['frequency'] ?? 'daily';
-    final timeOfDay = data['time_of_day']?.toString();
-    
+    final title = data['title']?.toString() ?? 'Untitled Habit';
+    final completions =
+        ((data['completions'] as List?)?.cast<String>() ?? const <String>[])
+            .toSet();
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    // Week starts Monday (weekday: Mon=1 ... Sun=7).
+    final monday = today.subtract(Duration(days: today.weekday - 1));
+    final weekDays = List<DateTime>.generate(
+      7,
+      (i) => monday.add(Duration(days: i)),
+    );
+    final todayKey = FirestoreService.istDateKey(today);
+    final streak = _computeHabitStreak(completions);
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: JarvisTheme.surface,
-        borderRadius: BorderRadius.circular(12),
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: JarvisTheme.surface2, width: 1),
+        ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Frequency badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              border: Border.all(color: user.accentColor),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              frequency.toUpperCase(),
-              style: JarvisTheme.bodySmall.copyWith(
-                color: user.accentColor,
-                fontSize: 10,
-              ),
-            ),
-          ),
-          
-          const SizedBox(width: 12),
-          
-          // Habit details
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data['title'] ?? 'Untitled Habit',
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
                   style: JarvisTheme.bodyMedium.copyWith(
                     color: JarvisTheme.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                
-                if (timeOfDay != null)
-                  const SizedBox(height: 4),
-                
-                if (timeOfDay != null)
-                  Text(
-                    timeOfDay,
-                    style: JarvisTheme.bodySmall.copyWith(
-                      color: JarvisTheme.textMuted,
-                    ),
+              ),
+              if (streak > 0)
+                Text(
+                  '🔥 ${streak}d',
+                  style: TextStyle(
+                    fontFamily: 'DMSans',
+                    fontSize: 11,
+                    color: user.accentColor,
+                    fontWeight: FontWeight.w600,
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
-          
-          // Active toggle
-          Switch(
-            value: isActive,
-            activeColor: user.accentColor,
-            onChanged: (value) {
-              FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(user.id)
-                  .collection('recurring_tasks')
-                  .doc(habitId)
-                  .update({'active': value});
-            },
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              for (int i = 0; i < 7; i++) ...[
+                Expanded(
+                  child: _buildHabitWeekCell(
+                    user: user,
+                    habitId: habitId,
+                    date: weekDays[i],
+                    completions: completions,
+                    todayKey: todayKey,
+                  ),
+                ),
+                if (i < 6) const SizedBox(width: 6),
+              ],
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildHabitWeekCell({
+    required UserProfile user,
+    required String habitId,
+    required DateTime date,
+    required Set<String> completions,
+    required String todayKey,
+  }) {
+    final key = FirestoreService.istDateKey(date);
+    final done = completions.contains(key);
+    final isToday = key == todayKey;
+    final isFuture = DateTime(date.year, date.month, date.day)
+        .isAfter(DateTime.now());
+
+    BoxDecoration decoration;
+    Widget? child;
+    if (done) {
+      decoration = BoxDecoration(
+        color: user.accentColor,
+        borderRadius: BorderRadius.circular(5),
+      );
+      child = const Icon(Icons.check, size: 14, color: Color(0xFF2A1C0A));
+    } else if (isToday) {
+      decoration = BoxDecoration(
+        border: Border.all(color: user.accentColor, width: 1.5),
+        borderRadius: BorderRadius.circular(5),
+      );
+      child = Text(
+        '·',
+        style: TextStyle(
+          color: JarvisTheme.textMuted,
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+    } else {
+      decoration = BoxDecoration(
+        color: JarvisTheme.surface2,
+        borderRadius: BorderRadius.circular(5),
+      );
+    }
+
+    return GestureDetector(
+      onTap: isFuture
+          ? null
+          : () => _firestoreService.toggleHabitCompletion(
+                user.id,
+                habitId,
+                key,
+                !done,
+              ),
+      child: Container(
+        height: 28,
+        decoration: decoration,
+        alignment: Alignment.center,
+        child: child,
       ),
     );
   }
@@ -3718,4 +3882,75 @@ class _SparklinePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SparklinePainter old) =>
       old.values != values || old.color != color;
+}
+
+/// 56×56 ring with inner surface circle and "N/M" Serif label.
+/// The arc sweeps clockwise from the top; done portion uses [accent],
+/// remainder uses `surface3`.
+class _HabitRing extends StatelessWidget {
+  const _HabitRing({
+    required this.progress,
+    required this.done,
+    required this.total,
+    required this.accent,
+  });
+
+  final double progress;
+  final int done;
+  final int total;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = progress.clamp(0.0, 1.0);
+    final Gradient gradient;
+    if (p >= 0.999) {
+      gradient = SweepGradient(colors: [accent, accent]);
+    } else if (p <= 0.001) {
+      gradient = const SweepGradient(
+        colors: [JarvisTheme.surface3, JarvisTheme.surface3],
+      );
+    } else {
+      gradient = SweepGradient(
+        colors: [accent, accent, JarvisTheme.surface3, JarvisTheme.surface3],
+        stops: [0.0, p, p, 1.0],
+      );
+    }
+
+    return SizedBox(
+      width: 56,
+      height: 56,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Transform.rotate(
+            angle: -1.5707963267948966, // -pi/2: start fill from top.
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: gradient,
+              ),
+            ),
+          ),
+          Container(
+            width: 46,
+            height: 46,
+            decoration: const BoxDecoration(
+              color: JarvisTheme.surface,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              '$done/$total',
+              style: const TextStyle(
+                fontFamily: 'InstrumentSerif',
+                fontSize: 15,
+                color: JarvisTheme.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

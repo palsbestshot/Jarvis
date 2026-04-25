@@ -78,30 +78,45 @@ class FirestoreService {
     final taskDoc = await _userCollection(userId, AppConstants.tasksCollection)
         .doc(taskId)
         .get();
-    
+
     if (!taskDoc.exists) {
       throw Exception('Task not found');
     }
-    
+
     final taskData = taskDoc.data() as Map<String, dynamic>;
     final currentDueDate = taskData['due_date']?.toString();
-    final dueTime = taskData['due_time']?.toString();
-    
-    // Calculate tomorrow's date
+
+    // Postpone semantics: push the task forward by one day, but never
+    // backwards. Overdue / no-date / today → tomorrow. Future date →
+    // current+1. This way "postpone" always feels like deferral.
     final now = DateTime.now();
-    final tomorrow = now.add(const Duration(days: 1));
-    final tomorrowStr = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
-    
-    // If there's no current due date, set to tomorrow
-    final newDueDate = currentDueDate?.isNotEmpty == true ? tomorrowStr : tomorrowStr;
-    
-    // Update the task with new due date and reset status to pending
-    await updateTask(userId, taskId, {
+    final tomorrow = DateTime(now.year, now.month, now.day)
+        .add(const Duration(days: 1));
+    DateTime newDate = tomorrow;
+    if (currentDueDate != null && currentDueDate.isNotEmpty) {
+      try {
+        final parsed = DateTime.parse(currentDueDate);
+        final advanced = DateTime(parsed.year, parsed.month, parsed.day)
+            .add(const Duration(days: 1));
+        if (advanced.isAfter(tomorrow)) newDate = advanced;
+      } catch (_) {
+        // Unparseable due_date → fall back to tomorrow.
+      }
+    }
+    String two(int n) => n.toString().padLeft(2, '0');
+    final newDueDate = '${newDate.year}-${two(newDate.month)}-${two(newDate.day)}';
+
+    // Preserve due_time only if it was set; never overwrite to null,
+    // which would clear an existing value via Firestore update().
+    final fields = <String, dynamic>{
       'due_date': newDueDate,
-      'due_time': dueTime,
       'status': 'pending',
-      'updated_at': FieldValue.serverTimestamp(),
-    });
+    };
+    final dueTime = taskData['due_time']?.toString();
+    if (dueTime != null && dueTime.isNotEmpty) {
+      fields['due_time'] = dueTime;
+    }
+    await updateTask(userId, taskId, fields);
   }
 
   // Flip the draft_status flag on an email task to 'requested'. A

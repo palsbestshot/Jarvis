@@ -22,14 +22,19 @@ class UserProfile {
     return Color(int.parse('0xFF$hex'));
   }
 
-  // Static configs — no Firestore needed for these
+  // Static configs — no Firestore needed for these.
+  //
+  // Section order matters: it drives both the dropdown picker (top-right
+  // of the board) and the long-press "Jump to section" sheet on the
+  // bottom-nav. Pallav reported Goals being buried at the bottom — promoted
+  // to position 2 so the HVAC roadmap is reachable in one tap.
   static final pallav = UserProfile(
     id: 'pallav',
     name: 'Pallav',
     accentHex: '#E8A045',
     ttsVoice: 'nova',
     personalityType: 'direct_coach',
-    boardSections: ['Tasks', 'Time', 'Habits', 'Thoughts', 'Finance', 'Goals'],
+    boardSections: ['Tasks', 'Goals', 'Time', 'Habits', 'Thoughts', 'Finance'],
   );
 
   static final rakhi = UserProfile(
@@ -39,14 +44,14 @@ class UserProfile {
     ttsVoice: 'echo',
     personalityType: 'warm_companion',
     // Sections she asked for (no Time / email — those are Pallav-only via
-    // the Claude tool gating in claude_service.dart):
-    //   Tasks | Habits | Thoughts | Finance | Goals | Meal Plans
+    // the Claude tool gating in claude_service.dart). Goals promoted up
+    // to mirror Pallav's ordering.
     boardSections: [
       'Tasks',
+      'Goals',
       'Habits',
       'Thoughts',
       'Finance',
-      'Goals',
       'Meal Plans',
     ],
   );

@@ -185,18 +185,27 @@ class _TimeSectionState extends State<TimeSection> {
             children: [
               Icon(Icons.timer, color: widget.user.accentColor, size: 18),
               const SizedBox(width: 6),
-              Text(
-                _rangeLabel(),
-                style: JarvisTheme.bodyLarge
-                    .copyWith(fontWeight: FontWeight.w700),
+              Flexible(
+                child: Text(
+                  _rangeLabel(),
+                  style: JarvisTheme.bodyLarge
+                      .copyWith(fontWeight: FontWeight.w700),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               if (a.logCount > 0)
-                Text(
-                  '${a.logCount} log${a.logCount == 1 ? '' : 's'}'
-                  '${a.visitCount > 0 ? ' · ${a.visitCount} visit${a.visitCount == 1 ? '' : 's'}' : ''}',
-                  style: JarvisTheme.bodySmall
-                      .copyWith(color: JarvisTheme.textMuted),
+                Flexible(
+                  child: Text(
+                    '${a.logCount} log${a.logCount == 1 ? '' : 's'}'
+                    '${a.visitCount > 0 ? ' · ${a.visitCount} visit${a.visitCount == 1 ? '' : 's'}' : ''}',
+                    style: JarvisTheme.bodySmall
+                        .copyWith(color: JarvisTheme.textMuted),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                  ),
                 ),
             ],
           ),
@@ -580,7 +589,7 @@ class _TimeSectionState extends State<TimeSection> {
                     style: JarvisTheme.bodySmall.copyWith(
                       color: JarvisTheme.textMuted,
                     ),
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (log.isVisit &&
@@ -592,7 +601,7 @@ class _TimeSectionState extends State<TimeSection> {
                         color: JarvisTheme.textSecondary,
                         fontStyle: FontStyle.italic,
                       ),
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -611,7 +620,7 @@ class _TimeSectionState extends State<TimeSection> {
                             style: JarvisTheme.bodySmall.copyWith(
                               color: JarvisTheme.textPrimary,
                             ),
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),

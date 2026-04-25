@@ -24,7 +24,7 @@ class EditHabitBottomSheet extends ConsumerStatefulWidget {
 class _EditHabitBottomSheetState extends ConsumerState<EditHabitBottomSheet> {
   final FirestoreService _firestoreService = FirestoreService();
   late TextEditingController _titleController;
-  late TextEditingController _timeController;
+  TimeOfDay? _selectedTime;
   late String _selectedFrequency;
   late bool _isActive;
   bool _isSubmitting = false;
@@ -33,7 +33,7 @@ class _EditHabitBottomSheetState extends ConsumerState<EditHabitBottomSheet> {
   void initState() {
     super.initState();
     _titleController = TextEditingController(text: widget.habitData['title'] ?? '');
-    _timeController = TextEditingController(text: widget.habitData['time_of_day'] ?? '');
+    _selectedTime = _parseTimeOfDay(widget.habitData['time_of_day']?.toString());
     _selectedFrequency = widget.habitData['frequency'] ?? AppConstants.recurringFrequencies.first;
     _isActive = widget.habitData['active'] ?? true;
   }
@@ -41,8 +41,17 @@ class _EditHabitBottomSheetState extends ConsumerState<EditHabitBottomSheet> {
   @override
   void dispose() {
     _titleController.dispose();
-    _timeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? const TimeOfDay(hour: 7, minute: 0),
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedTime = picked);
+    }
   }
 
   Future<void> _submit() async {
@@ -58,7 +67,7 @@ class _EditHabitBottomSheetState extends ConsumerState<EditHabitBottomSheet> {
       await _firestoreService.updateRecurringTask(user.id, widget.habitId, {
         'title': title,
         'frequency': _selectedFrequency,
-        'time_of_day': _timeController.text.trim().isEmpty ? null : _timeController.text.trim(),
+        'time_of_day': _formatTimeOfDay(_selectedTime),
         'active': _isActive,
       });
       widget.onHabitUpdated();
@@ -158,20 +167,42 @@ class _EditHabitBottomSheetState extends ConsumerState<EditHabitBottomSheet> {
             }).toList(),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _timeController,
-            style: JarvisTheme.bodyMedium.copyWith(color: JarvisTheme.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'Time of day (e.g. 7:00 AM)',
-              hintStyle: JarvisTheme.bodyMedium.copyWith(color: JarvisTheme.textMuted),
-              filled: true,
-              fillColor: JarvisTheme.surface,
-              border: OutlineInputBorder(
+          InkWell(
+            onTap: _pickTime,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: JarvisTheme.surface,
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
               ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              prefixIcon: Icon(Icons.schedule, color: JarvisTheme.textMuted, size: 18),
+              child: Row(
+                children: [
+                  Icon(Icons.schedule, color: JarvisTheme.textMuted, size: 18),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _selectedTime == null
+                          ? 'Pick reminder time (optional)'
+                          : _selectedTime!.format(context),
+                      style: JarvisTheme.bodyMedium.copyWith(
+                        color: _selectedTime == null
+                            ? JarvisTheme.textMuted
+                            : JarvisTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (_selectedTime != null)
+                    GestureDetector(
+                      onTap: () => setState(() => _selectedTime = null),
+                      child: Icon(
+                        Icons.close,
+                        color: JarvisTheme.textMuted,
+                        size: 18,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 12),
@@ -219,4 +250,39 @@ class _EditHabitBottomSheetState extends ConsumerState<EditHabitBottomSheet> {
       ),
     );
   }
+}
+
+// Stored as 24h "HH:mm" so the value is unambiguous regardless of locale.
+// Legacy free-text values like "7:00 AM" are still parsed for display.
+
+String? _formatTimeOfDay(TimeOfDay? t) {
+  if (t == null) return null;
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(t.hour)}:${two(t.minute)}';
+}
+
+TimeOfDay? _parseTimeOfDay(String? raw) {
+  if (raw == null) return null;
+  final s = raw.trim();
+  if (s.isEmpty) return null;
+  final m = RegExp(r'^(\d{1,2}):(\d{2})\s*$').firstMatch(s);
+  if (m != null) {
+    final h = int.tryParse(m.group(1)!);
+    final mm = int.tryParse(m.group(2)!);
+    if (h != null && mm != null && h >= 0 && h < 24 && mm >= 0 && mm < 60) {
+      return TimeOfDay(hour: h, minute: mm);
+    }
+  }
+  final ampm = RegExp(r'^(\d{1,2}):(\d{2})\s*([AaPp][Mm])\s*$').firstMatch(s);
+  if (ampm != null) {
+    var h = int.tryParse(ampm.group(1)!) ?? 0;
+    final mm = int.tryParse(ampm.group(2)!) ?? 0;
+    final isPm = ampm.group(3)!.toUpperCase() == 'PM';
+    if (h == 12) h = 0;
+    if (isPm) h += 12;
+    if (h >= 0 && h < 24 && mm >= 0 && mm < 60) {
+      return TimeOfDay(hour: h, minute: mm);
+    }
+  }
+  return null;
 }

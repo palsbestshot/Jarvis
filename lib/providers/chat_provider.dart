@@ -80,6 +80,16 @@ class ChatNotifier extends Notifier<ChatState> {
     }
   }
 
+  /// Drain pending_messages for the currently active user. Public so the
+  /// home_screen can call it when a push notification is tapped — without
+  /// this, briefings/nudges sent by Cloud Functions only land in chat
+  /// history on the next cold start.
+  Future<void> reloadPendingMessages() async {
+    final userId = ref.read(activeUserIdProvider);
+    if (userId == null) return;
+    await _loadPendingMessages(userId);
+  }
+
   Future<void> _loadPendingMessages(String userId) async {
     try {
       final pendingMessagesSnapshot = await FirebaseFirestore.instance

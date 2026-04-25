@@ -15,7 +15,16 @@ class NotificationService {
   StreamSubscription? _taskSubscription;
   String? _currentUserId;
   final Ref? _ref;
+  // Invoked when the user taps a JARVIS notification (push or local).
+  // home_screen wires this to switch to the chat tab and re-drain
+  // pending_messages so the briefing/nudge content is visible — bug
+  // report: "notification content vanishes, unable to see anywhere".
+  void Function(Map<String, dynamic> data)? _onNotificationTap;
   static bool _tzInitialized = false;
+
+  void setOnNotificationTap(void Function(Map<String, dynamic> data) cb) {
+    _onNotificationTap = cb;
+  }
 
   NotificationService({Ref? ref}) : _ref = ref {
     _localNotifications = FlutterLocalNotificationsPlugin();
@@ -391,6 +400,8 @@ class NotificationService {
     final type = data['type'];
     print('Notification tapped (type=$type) → routing to chat');
     _ref?.read(notificationActionProvider.notifier).state = 'chat';
+    final cb = _onNotificationTap;
+    if (cb != null) cb(data);
   }
 
   Future<void> dispose() async {

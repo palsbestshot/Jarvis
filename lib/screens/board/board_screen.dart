@@ -3593,7 +3593,7 @@ class _AddHabitBottomSheet extends ConsumerStatefulWidget {
 class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
   final FirestoreService _firestoreService = FirestoreService();
   final TextEditingController _titleController = TextEditingController();
-  final TextEditingController _timeController = TextEditingController();
+  TimeOfDay? _selectedTime;
   String _selectedFrequency = AppConstants.recurringFrequencies.first;
   // Mon=1..Sun=7 (Dart DateTime.weekday convention). Default: today.
   final Set<int> _repeatDays = <int>{DateTime.now().weekday};
@@ -3604,8 +3604,17 @@ class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
   @override
   void dispose() {
     _titleController.dispose();
-    _timeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? const TimeOfDay(hour: 7, minute: 0),
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedTime = picked);
+    }
   }
 
   Future<void> _submit() async {
@@ -3621,9 +3630,7 @@ class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
       final data = <String, dynamic>{
         'title': title,
         'frequency': _selectedFrequency,
-        'time_of_day': _timeController.text.trim().isEmpty
-            ? null
-            : _timeController.text.trim(),
+        'time_of_day': _formatTimeOfDay(_selectedTime),
         'active': true,
       };
       if (_selectedFrequency == 'weekly') {
@@ -3820,21 +3827,10 @@ class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
             ),
           ],
           const SizedBox(height: 12),
-          TextField(
-            controller: _timeController,
-            style: JarvisTheme.bodyMedium.copyWith(color: JarvisTheme.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'Time of day (e.g. 7:00 AM)',
-              hintStyle: JarvisTheme.bodyMedium.copyWith(color: JarvisTheme.textMuted),
-              filled: true,
-              fillColor: JarvisTheme.surface,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              prefixIcon: Icon(Icons.schedule, color: JarvisTheme.textMuted, size: 18),
-            ),
+          _HabitTimeRow(
+            time: _selectedTime,
+            onPick: _pickTime,
+            onClear: () => setState(() => _selectedTime = null),
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -3863,6 +3859,101 @@ class _AddHabitBottomSheetState extends ConsumerState<_AddHabitBottomSheet> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Habit time-of-day helpers ─────────────────────────────────────────────
+// Pallav's bug: free-text time entry felt vague — replaced with a
+// TimePicker. Stored as 24h "HH:mm" so it's unambiguous and parseable;
+// rendered to the user in 12h with AM/PM via [TimeOfDay.format].
+
+String? _formatTimeOfDay(TimeOfDay? t) {
+  if (t == null) return null;
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(t.hour)}:${two(t.minute)}';
+}
+
+TimeOfDay? _parseTimeOfDay(String? raw) {
+  if (raw == null) return null;
+  final s = raw.trim();
+  if (s.isEmpty) return null;
+  // Try "HH:mm" / "H:mm" first.
+  final m = RegExp(r'^(\d{1,2}):(\d{2})\s*$').firstMatch(s);
+  if (m != null) {
+    final h = int.tryParse(m.group(1)!);
+    final mm = int.tryParse(m.group(2)!);
+    if (h != null && mm != null && h >= 0 && h < 24 && mm >= 0 && mm < 60) {
+      return TimeOfDay(hour: h, minute: mm);
+    }
+  }
+  // Fall back to "h:mm AM/PM" for legacy values.
+  final ampm = RegExp(r'^(\d{1,2}):(\d{2})\s*([AaPp][Mm])\s*$').firstMatch(s);
+  if (ampm != null) {
+    var h = int.tryParse(ampm.group(1)!) ?? 0;
+    final mm = int.tryParse(ampm.group(2)!) ?? 0;
+    final isPm = ampm.group(3)!.toUpperCase() == 'PM';
+    if (h == 12) h = 0;
+    if (isPm) h += 12;
+    if (h >= 0 && h < 24 && mm >= 0 && mm < 60) {
+      return TimeOfDay(hour: h, minute: mm);
+    }
+  }
+  return null;
+}
+
+class _HabitTimeRow extends StatelessWidget {
+  final TimeOfDay? time;
+  final VoidCallback onPick;
+  final VoidCallback onClear;
+
+  const _HabitTimeRow({
+    required this.time,
+    required this.onPick,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = time == null
+        ? 'Pick reminder time (optional)'
+        : time!.format(context);
+    final hasTime = time != null;
+    return InkWell(
+      onTap: onPick,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: JarvisTheme.surface,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.schedule, color: JarvisTheme.textMuted, size: 18),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: JarvisTheme.bodyMedium.copyWith(
+                  color: hasTime
+                      ? JarvisTheme.textPrimary
+                      : JarvisTheme.textMuted,
+                ),
+              ),
+            ),
+            if (hasTime)
+              GestureDetector(
+                onTap: onClear,
+                child: Icon(
+                  Icons.close,
+                  color: JarvisTheme.textMuted,
+                  size: 18,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

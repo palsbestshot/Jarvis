@@ -9,6 +9,7 @@ import '../core/theme.dart';
 import '../widgets/jarvis_logo.dart';
 import '../widgets/user_avatar.dart';
 import '../providers/auth_provider.dart';
+import '../providers/chat_provider.dart';
 import '../providers/widget_action_provider.dart';
 import '../providers/notification_action_provider.dart';
 import '../providers/notification_service_provider.dart';
@@ -232,9 +233,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Future<void> _initializeNotificationService() async {
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('active_user');
-    
+
     if (userId != null && userId.isNotEmpty) {
       await _notificationService.initialize(userId);
+      // When a JARVIS notification is tapped, jump to the chat tab and
+      // drain pending_messages → chat_history so the briefing/nudge body
+      // is visible. Pre-fix the body would land in pending_messages but
+      // the user, dropped on the board, never saw it (bug report:
+      // "notification content vanishes, unable to see anywhere").
+      _notificationService.setOnNotificationTap((_) {
+        if (!mounted) return;
+        _onItemTapped(0);
+        ref.read(chatProvider.notifier).reloadPendingMessages();
+      });
     }
   }
 

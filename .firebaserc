@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "jarvis-78573"
+  },
+  "targets": {
+    "jarvis-78573": {
+      "hosting": {
+        "pallav": [
+          "pallav-jarvis"
+        ]
+      }
+    }
+  }
+}

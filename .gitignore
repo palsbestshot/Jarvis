@@ -57,6 +57,9 @@ functions/.env
 functions/.env.local
 functions/node_modules/
 
+# Firebase CLI cache (hosting upload manifests, etc.)
+.firebase/
+
 # Flutter app bundled API keys (OpenAI + Anthropic) — DO NOT commit.
 # Pallav's APK bundles this at build time; Rakhi's web build uses
 # env.web.json (INGEST_SECRET only). Neither belongs on GitHub.

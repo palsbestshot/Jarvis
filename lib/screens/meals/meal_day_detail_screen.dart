@@ -1,9 +1,19 @@
 // MealDayDetailScreen — full-screen view of a single day's meal plan.
-// Shows breakfast/lunch/dinner by default; brunch + eve_snacks are
-// hidden behind "+ Add brunch" / "+ Add eve snacks" pills unless the
-// day has one planned.
+// Each slot can hold multiple dishes (e.g. dal + chawal + roti + sabzi
+// + salad for lunch). Breakfast / lunch / dinner show by default;
+// brunch + eve_snacks are hidden behind "+ Add brunch" / "+ Add eve
+// snacks" pills unless the day has them planned.
 //
-// Tap `+ Add <slot>` or the overflow "Change" → opens DishPickerSheet.
+// Tapping "+ Add dish" inside a slot, or the row's tap-to-change,
+// opens DishPickerSheet. The picker is single-pick per add: tap one,
+// it lands as a new row, tap "+" again for the next dish. (Faster
+// learning curve than a multi-select sheet for a 5-component thali.)
+//
+// Styling is PWA-aware via kIsWeb: on web (rakhi-web PWA) cards get
+// soft pink shadows, an InstrumentSerif dish-name treatment in the
+// rakhiAccentDeep colour, and uppercase DMSans slot labels. On
+// Android the same widgets fall back to the Pallav-app surface
+// styling.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -44,7 +54,9 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
     return '${d.year}-${two(d.month)}-${two(d.day)}';
   }
 
-  Future<void> _pickDishFor(MealSlotId slot, MealSlot? existing) async {
+  /// Append a new dish to the slot's list. Used by the empty-state
+  /// "Add" button and the per-slot "+ Add another dish" button.
+  Future<void> _addDishTo(MealSlotId slot) async {
     final picked = await showModalBottomSheet<DishPickResult>(
       context: context,
       isScrollControlled: true,
@@ -52,12 +64,11 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
       builder: (_) => DishPickerSheet(
         user: widget.user,
         slot: slot,
-        currentDishId: existing?.dishId,
+        currentDishId: null,
       ),
     );
     if (picked == null || !mounted) return;
-    // Save the slot, then bump the dish's usage counter.
-    await _firestore.setMealSlot(
+    await _firestore.appendDishToMealSlot(
       widget.user.id,
       _dateKey,
       slot.value,
@@ -66,6 +77,52 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
     await _firestore.incrementDishTimesUsed(widget.user.id, picked.dishId);
   }
 
+  /// Replace one specific dish in the slot — opens the picker pre-
+  /// selected on the existing dish so changing it is one tap.
+  Future<void> _changeDishAt(
+    MealSlotId slot,
+    int index,
+    List<MealSlot> current,
+  ) async {
+    final existing = current[index];
+    final picked = await showModalBottomSheet<DishPickResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DishPickerSheet(
+        user: widget.user,
+        slot: slot,
+        currentDishId: existing.dishId,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final updated = [...current];
+    updated[index] = MealSlot(dishId: picked.dishId, notes: picked.notes);
+    await _firestore.setMealSlot(
+      widget.user.id,
+      _dateKey,
+      slot.value,
+      updated.map((s) => s.toMap()).toList(),
+    );
+    await _firestore.incrementDishTimesUsed(widget.user.id, picked.dishId);
+  }
+
+  /// Remove just one dish row from the slot.
+  Future<void> _removeDishAt(
+    MealSlotId slot,
+    int index,
+    List<MealSlot> current,
+  ) async {
+    final updated = [...current]..removeAt(index);
+    await _firestore.setMealSlot(
+      widget.user.id,
+      _dateKey,
+      slot.value,
+      updated.isEmpty ? null : updated.map((s) => s.toMap()).toList(),
+    );
+  }
+
+  /// Wipe the entire slot — exposed via the slot-level overflow menu.
   Future<void> _clearSlot(MealSlotId slot) async {
     await _firestore.setMealSlot(widget.user.id, _dateKey, slot.value, null);
   }
@@ -91,15 +148,11 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
             plan = MealPlanDay.empty(_dateKey);
           }
           // Auto-show optional rows if they're already planned.
-          final brunchPlanned = plan.slot(MealSlotId.brunch) != null;
-          final eveSnacksPlanned = plan.slot(MealSlotId.eveSnacks) != null;
+          final brunchPlanned = plan.isPlanned(MealSlotId.brunch);
+          final eveSnacksPlanned = plan.isPlanned(MealSlotId.eveSnacks);
           // Only show the nutrition button when at least one slot has a
-          // dish planned — nothing to compute otherwise. Keeps the header
-          // uncluttered on empty days.
-          final hasAnyPlanned = MealSlotId.values.any((s) {
-            final v = plan.slot(s);
-            return v != null && v.dishId.isNotEmpty;
-          });
+          // dish — nothing to compute otherwise.
+          final hasAnyPlanned = plan.hasAnyPlanned;
           return ListView(
             padding: const EdgeInsets.fromLTRB(
               JarvisTheme.md,
@@ -133,10 +186,9 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
     );
   }
 
-  /// Full-width pill at the top of the day-detail ListView. Tapping opens
-  /// `NutritionSheet`, which gathers the planned slots + their dish entries
-  /// (via the parent `_dishCache`) and hits Claude for a live calorie +
-  /// macro breakdown. Only rendered when at least one slot is planned.
+  /// Full-width pill at the top of the day-detail ListView. Tapping
+  /// opens `NutritionSheet`, which gathers every dish across every
+  /// planned slot and hits Claude for a live calorie + macro breakdown.
   Widget _buildNutritionButton(MealPlanDay plan) {
     return OutlinedButton.icon(
       onPressed: () => _openNutritionSheet(plan),
@@ -161,17 +213,15 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
     );
   }
 
-  /// Ensure every planned dish is in `_dishCache`, then open the sheet.
-  /// Pre-warming means the sheet's computeDayNutrition call has the dish
-  /// names + ingredients + tags already; no extra round-trip inside the
-  /// sheet itself.
+  /// Ensure every planned dish (across every slot) is in `_dishCache`,
+  /// then open the sheet. Pre-warming means the sheet's
+  /// computeDayNutrition call has names + ingredients + tags ready.
   Future<void> _openNutritionSheet(MealPlanDay plan) async {
     final plannedIds = <String>[
       for (final s in MealSlotId.values)
-        if (plan.slot(s) != null && plan.slot(s)!.dishId.isNotEmpty)
-          plan.slot(s)!.dishId,
+        for (final m in plan.dishes(s))
+          if (m.dishId.isNotEmpty) m.dishId,
     ];
-    // Load any dishes we haven't cached yet.
     await Future.wait(
       plannedIds
           .where((id) => !_dishCache.containsKey(id))
@@ -220,8 +270,8 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
   }
 
   Widget _slotCard(MealPlanDay plan, MealSlotId slot) {
-    final slotValue = plan.slot(slot);
-    final isPlanned = slotValue != null && slotValue.dishId.isNotEmpty;
+    final dishes = plan.dishes(slot);
+    final isPlanned = dishes.isNotEmpty;
     final Color cardBg;
     final Color borderColor;
     final List<BoxShadow>? shadow;
@@ -260,7 +310,7 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
       child: Padding(
         padding: const EdgeInsets.all(JarvisTheme.md),
         child: isPlanned
-            ? _plannedSlotBody(plan, slot, slotValue)
+            ? _plannedSlotBody(slot, dishes)
             : _emptySlotBody(slot),
       ),
     );
@@ -283,20 +333,22 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
     final labelText = kIsWeb ? slot.label.toUpperCase() : slot.label;
     return Row(
       children: [
-        SizedBox(
-          width: kIsWeb ? 62 : null,
-          child: Text(labelText, style: labelStyle),
-        ),
-        if (!kIsWeb) const SizedBox(width: JarvisTheme.xs),
         Expanded(
-          child: Text(
-            'Not planned',
-            style: JarvisTheme.bodyMedium
-                .copyWith(color: JarvisTheme.textSecondary),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(labelText, style: labelStyle),
+              const SizedBox(height: JarvisTheme.xs),
+              Text(
+                'Not planned',
+                style: JarvisTheme.bodyMedium
+                    .copyWith(color: JarvisTheme.textSecondary),
+              ),
+            ],
           ),
         ),
         TextButton.icon(
-          onPressed: () => _pickDishFor(slot, null),
+          onPressed: () => _addDishTo(slot),
           icon: const Icon(Icons.add, size: 18),
           label: const Text('Add'),
           style: TextButton.styleFrom(
@@ -307,8 +359,7 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
     );
   }
 
-  Widget _plannedSlotBody(
-      MealPlanDay plan, MealSlotId slot, MealSlot value) {
+  Widget _plannedSlotBody(MealSlotId slot, List<MealSlot> dishes) {
     final labelStyle = kIsWeb
         ? TextStyle(
             fontFamily: 'DMSans',
@@ -322,6 +373,75 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
             fontWeight: FontWeight.w600,
             letterSpacing: 0.5,
           );
+    final labelText = kIsWeb ? slot.label.toUpperCase() : slot.label;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Slot header row: label + slot-level overflow menu.
+        Row(
+          children: [
+            Expanded(
+              child: Text(labelText, style: labelStyle),
+            ),
+            if (dishes.length > 1)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Text(
+                  '${dishes.length} dishes',
+                  style: JarvisTheme.bodySmall.copyWith(
+                    color: JarvisTheme.textMuted,
+                  ),
+                ),
+              ),
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, color: JarvisTheme.textMuted),
+              color: JarvisTheme.surface2,
+              onSelected: (action) async {
+                if (action == 'clear_all') await _clearSlot(slot);
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'clear_all',
+                  child: Text('Clear all',
+                      style: TextStyle(color: JarvisTheme.textPrimary)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        // Dish rows.
+        for (int i = 0; i < dishes.length; i++) ...[
+          if (i > 0)
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: JarvisTheme.surface2,
+            ),
+          _dishRow(slot, dishes, i),
+        ],
+        // Footer "+ add another dish" button.
+        const SizedBox(height: JarvisTheme.xs),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => _addDishTo(slot),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add another dish'),
+            style: TextButton.styleFrom(
+              foregroundColor: widget.user.accentColor,
+              padding: const EdgeInsets.symmetric(
+                horizontal: JarvisTheme.sm,
+                vertical: 4,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _dishRow(MealSlotId slot, List<MealSlot> dishes, int index) {
+    final dish = dishes[index];
     final dishNameStyle = kIsWeb
         ? const TextStyle(
             fontFamily: 'InstrumentSerif',
@@ -339,83 +459,56 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
             fontSize: 12,
           )
         : JarvisTheme.bodySmall.copyWith(color: JarvisTheme.textMuted);
-    final labelText = kIsWeb ? slot.label.toUpperCase() : slot.label;
     return FutureBuilder<Dish?>(
-      future: _loadDish(value.dishId),
+      future: _loadDish(dish.dishId),
       builder: (context, snap) {
-        final dish = snap.data;
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: kIsWeb ? 62 : null,
-              child: Padding(
-                padding: EdgeInsets.only(top: kIsWeb ? 4 : 0),
-                child: Text(labelText, style: labelStyle),
-              ),
-            ),
-            if (!kIsWeb) const SizedBox.shrink(),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!kIsWeb) ...[
-                    Text(slot.label,
-                        style: JarvisTheme.bodySmall.copyWith(
-                          color: JarvisTheme.textMuted,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.5,
-                        )),
-                    const SizedBox(height: JarvisTheme.xs),
-                  ],
-                  Text(
-                    dish?.name ?? '(dish removed)',
-                    style: dishNameStyle,
-                  ),
-                  if (dish != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '${dish.prepMinutes} min • ${dish.tags.take(3).join(" · ")}',
-                      style: metaStyle,
-                    ),
-                  ],
-                  if (value.notes != null && value.notes!.isNotEmpty) ...[
-                    const SizedBox(height: JarvisTheme.xs),
-                    Text(
-                      value.notes!,
-                      style: JarvisTheme.bodySmall.copyWith(
-                        color: JarvisTheme.textSecondary,
-                        fontStyle: FontStyle.italic,
+        final loaded = snap.data;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: JarvisTheme.sm),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => _changeDishAt(slot, index, dishes),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        loaded?.name ?? '(dish removed)',
+                        style: dishNameStyle,
                       ),
-                    ),
-                  ],
-                ],
+                      if (loaded != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '${loaded.prepMinutes} min • ${loaded.tags.take(3).join(" · ")}',
+                          style: metaStyle,
+                        ),
+                      ],
+                      if (dish.notes != null && dish.notes!.isNotEmpty) ...[
+                        const SizedBox(height: JarvisTheme.xs),
+                        Text(
+                          dish.notes!,
+                          style: JarvisTheme.bodySmall.copyWith(
+                            color: JarvisTheme.textSecondary,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
-            ),
-            PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, color: JarvisTheme.textMuted),
-              color: JarvisTheme.surface2,
-              onSelected: (action) async {
-                if (action == 'change') {
-                  await _pickDishFor(slot, value);
-                } else if (action == 'clear') {
-                  await _clearSlot(slot);
-                }
-              },
-              itemBuilder: (_) => [
-                PopupMenuItem(
-                  value: 'change',
-                  child: Text('Change dish',
-                      style: TextStyle(color: JarvisTheme.textPrimary)),
-                ),
-                PopupMenuItem(
-                  value: 'clear',
-                  child: Text('Clear',
-                      style: TextStyle(color: JarvisTheme.textPrimary)),
-                ),
-              ],
-            ),
-          ],
+              IconButton(
+                tooltip: 'Remove',
+                icon: Icon(Icons.close,
+                    color: JarvisTheme.textMuted, size: 18),
+                onPressed: () => _removeDishAt(slot, index, dishes),
+                visualDensity: VisualDensity.compact,
+                splashRadius: 20,
+              ),
+            ],
+          ),
         );
       },
     );
@@ -447,4 +540,3 @@ class _MealDayDetailScreenState extends State<MealDayDetailScreen> {
     }
   }
 }
-

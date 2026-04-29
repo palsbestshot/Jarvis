@@ -506,6 +506,9 @@ class ChatNotifier extends Notifier<ChatState> {
       case 'save_meal':
         return await _handleSaveMeal(userId, toolInput);
 
+      case 'add_dish_to_meal':
+        return await _handleAddDishToMeal(userId, toolInput);
+
       case 'query_dishes':
         return await _handleQueryDishes(userId, toolInput);
 
@@ -802,35 +805,94 @@ class ChatNotifier extends Notifier<ChatState> {
     });
   }
 
-  /// Plan a single meal slot. If the dish isn't in the catalog, create
-  /// it first (tagged 'custom') so future suggestions can surface it.
+  /// Plan a meal slot. Accepts either a single dish (`dish_name`) or a
+  /// combo (`dish_names: [...]`) — when Rakhi says "lunch is dal chawal
+  /// roti sabzi salad" the combo lands as one slot with five dishes.
+  /// `save_meal` always *overwrites* the slot; for incremental adds use
+  /// `add_dish_to_meal`. Auto-creates catalog entries (tagged 'custom')
+  /// for any dish name we don't recognise.
   Future<String> _handleSaveMeal(
     String userId,
     Map<String, dynamic> input,
   ) async {
     final mealType = (input['meal_type'] ?? 'lunch').toString();
-    final dishName = (input['dish_name'] ?? '').toString().trim();
-    if (dishName.isEmpty) {
+    final names = _resolveDishNames(input);
+    if (names.isEmpty) {
       return '✗ No dish name given.';
     }
     final dateRaw = (input['date'] ?? '').toString().trim();
     final dateKey = _resolveDateKey(dateRaw);
+    final notes = (input['notes'] ?? '').toString().trim();
 
-    // Find existing dish or auto-create a custom one with AI enrichment.
+    final entries = <Map<String, dynamic>>[];
+    for (final name in names) {
+      var dishId = await _findDishByName(userId, name);
+      dishId ??= await _autoCreateDishWithEnrichment(userId, name, mealType);
+      // Notes only attach to the first entry to mirror "lunch dal chawal
+      // — extra ghee" → the note belongs to the meal, not each dish.
+      // Claude can pass per-dish notes via plan_day_meals if needed.
+      entries.add({
+        'dish_id': dishId,
+        if (entries.isEmpty && notes.isNotEmpty) 'notes': notes,
+      });
+      await _firestoreService.incrementDishTimesUsed(userId, dishId);
+    }
+
+    await _firestoreService.setMealSlot(userId, dateKey, mealType, entries);
+    final summary = names.length == 1 ? names.first : names.join(' + ');
+    return '✓ Meal planned — $dateKey $mealType: $summary';
+  }
+
+  /// Append one dish to an existing meal slot WITHOUT replacing what's
+  /// already there. Use when Rakhi says "add roti to lunch" / "also add
+  /// salad to dinner" / "I'll have curd with lunch too". Auto-creates a
+  /// catalog entry if the dish is new.
+  Future<String> _handleAddDishToMeal(
+    String userId,
+    Map<String, dynamic> input,
+  ) async {
+    final mealType = (input['meal_type'] ?? '').toString();
+    final dishName = (input['dish_name'] ?? '').toString().trim();
+    if (mealType.isEmpty || dishName.isEmpty) {
+      return '✗ Need both meal_type and dish_name.';
+    }
+    final dateKey = _resolveDateKey((input['date'] ?? '').toString());
+    final notes = (input['notes'] ?? '').toString().trim();
+
     var dishId = await _findDishByName(userId, dishName);
     dishId ??= await _autoCreateDishWithEnrichment(userId, dishName, mealType);
-    final notes = (input['notes'] ?? '').toString().trim();
-    await _firestoreService.setMealSlot(
-      userId,
-      dateKey,
-      mealType,
-      {
-        'dish_id': dishId,
-        if (notes.isNotEmpty) 'notes': notes,
-      },
-    );
+    await _firestoreService.appendDishToMealSlot(userId, dateKey, mealType, {
+      'dish_id': dishId,
+      if (notes.isNotEmpty) 'notes': notes,
+    });
     await _firestoreService.incrementDishTimesUsed(userId, dishId);
-    return '✓ Meal planned — $dateKey $mealType: $dishName';
+    return '✓ Added to $mealType ($dateKey) — $dishName';
+  }
+
+  /// Pull dish names out of the tool input, supporting either:
+  ///   - `dish_name`: single-string (legacy / single-dish phrasing)
+  ///   - `dish_names`: list of strings (combo phrasing)
+  /// Trims, drops empties, preserves order, deduplicates case-insensitively.
+  List<String> _resolveDishNames(Map<String, dynamic> input) {
+    final out = <String>[];
+    final seen = <String>{};
+    void add(String raw) {
+      final t = raw.trim();
+      if (t.isEmpty) return;
+      final key = t.toLowerCase();
+      if (seen.contains(key)) return;
+      seen.add(key);
+      out.add(t);
+    }
+    final list = input['dish_names'];
+    if (list is List) {
+      for (final v in list) {
+        add(v.toString());
+      }
+    }
+    final single = input['dish_name'];
+    if (single is String) add(single);
+    return out;
   }
 
   /// Pull dishes from Rakhi's catalog for Claude to consume. Filters
@@ -903,9 +965,12 @@ class ChatNotifier extends Notifier<ChatState> {
     return buf.toString();
   }
 
-  /// Plan multiple meals in one go. Each plan entry gets fuzzy-matched
-  /// against the catalog (auto-create if no match) and written to the
-  /// meal_plans doc. Revenue-neutral — just a batched save_meal.
+  /// Plan multiple meals in one go. Each plan entry can be either a
+  /// single dish (`dish_name`) or a combo (`dish_names: [...]`). Entries
+  /// that share a slot accumulate into that slot's dish list — so
+  /// Claude can either send one entry per slot with a list, or several
+  /// entries with the same slot, and either way produces the same
+  /// combo. Auto-creates catalog entries for any dish we don't know.
   Future<String> _handlePlanDayMeals(
     String userId,
     Map<String, dynamic> input,
@@ -915,24 +980,42 @@ class ChatNotifier extends Notifier<ChatState> {
     if (plan.isEmpty) {
       return '✗ No plan entries received.';
     }
-    final savedParts = <String>[];
+
+    // Group dishes per slot first, preserving order, so a slot ends up
+    // with one consolidated list write instead of N overwriting writes.
+    final perSlot = <String, List<Map<String, dynamic>>>{};
+    final perSlotLabels = <String, List<String>>{};
     for (final entry in plan) {
       if (entry is! Map<String, dynamic>) continue;
       final slot = (entry['slot'] ?? '').toString();
-      final dishName = (entry['dish_name'] ?? '').toString().trim();
-      if (slot.isEmpty || dishName.isEmpty) continue;
-      var dishId = await _findDishByName(userId, dishName);
-      dishId ??= await _autoCreateDishWithEnrichment(userId, dishName, slot);
+      if (slot.isEmpty) continue;
+      final names = _resolveDishNames(entry);
+      if (names.isEmpty) continue;
       final notes = (entry['notes'] ?? '').toString().trim();
-      await _firestoreService.setMealSlot(userId, dateKey, slot, {
-        'dish_id': dishId,
-        if (notes.isNotEmpty) 'notes': notes,
-      });
-      await _firestoreService.incrementDishTimesUsed(userId, dishId);
-      savedParts.add('$slot: $dishName');
+      for (var i = 0; i < names.length; i++) {
+        final name = names[i];
+        var dishId = await _findDishByName(userId, name);
+        dishId ??= await _autoCreateDishWithEnrichment(userId, name, slot);
+        final dishEntry = <String, dynamic>{
+          'dish_id': dishId,
+          // Per-entry notes attach to just the first dish in the entry,
+          // matching `_handleSaveMeal`'s rule.
+          if (i == 0 && notes.isNotEmpty) 'notes': notes,
+        };
+        perSlot.putIfAbsent(slot, () => []).add(dishEntry);
+        perSlotLabels.putIfAbsent(slot, () => []).add(name);
+        await _firestoreService.incrementDishTimesUsed(userId, dishId);
+      }
     }
-    if (savedParts.isEmpty) {
+
+    if (perSlot.isEmpty) {
       return '✗ Plan had no valid entries.';
+    }
+    final savedParts = <String>[];
+    for (final slot in perSlot.keys) {
+      await _firestoreService.setMealSlot(
+          userId, dateKey, slot, perSlot[slot]!);
+      savedParts.add('$slot: ${perSlotLabels[slot]!.join(" + ")}');
     }
     return '✓ Day planned $dateKey — ${savedParts.join(" · ")}';
   }
@@ -991,23 +1074,38 @@ class ChatNotifier extends Notifier<ChatState> {
       final slots = <Map<String, dynamic>>[];
       if (plan != null) {
         for (final slotKey in slotLabels.keys) {
+          // Slot may be stored as a List<Map> (new combo shape) or a
+          // single Map (legacy single-dish). Normalise to a list, then
+          // emit one slot entry per dish so Claude sees every component
+          // and can compute combo nutrition correctly.
           final raw = plan[slotKey];
-          if (raw is! Map) continue;
-          final dishId = (raw['dish_id'] ?? '').toString();
-          final notes = (raw['notes'] ?? '').toString();
-          final dish = dishById[dishId];
-          slots.add({
-            'slot': slotKey,
-            'slot_label': slotLabels[slotKey],
-            'dish_name': dish?['name'] ??
-                (dishId.isNotEmpty ? '(unknown dish: $dishId)' : '(empty)'),
-            if (dish?['prep_minutes'] != null)
-              'prep_minutes': dish!['prep_minutes'],
-            if (dish?['tags'] is List) 'tags': dish!['tags'],
-            if (dish?['ingredients'] is List)
-              'ingredients': dish!['ingredients'],
-            if (notes.isNotEmpty) 'notes': notes,
-          });
+          final entries = <Map<String, dynamic>>[];
+          if (raw is List) {
+            for (final e in raw) {
+              if (e is Map<String, dynamic>) entries.add(e);
+            }
+          } else if (raw is Map<String, dynamic>) {
+            entries.add(raw);
+          }
+          for (final entry in entries) {
+            final dishId = (entry['dish_id'] ?? '').toString();
+            final notes = (entry['notes'] ?? '').toString();
+            final dish = dishById[dishId];
+            slots.add({
+              'slot': slotKey,
+              'slot_label': slotLabels[slotKey],
+              'dish_name': dish?['name'] ??
+                  (dishId.isNotEmpty
+                      ? '(unknown dish: $dishId)'
+                      : '(empty)'),
+              if (dish?['prep_minutes'] != null)
+                'prep_minutes': dish!['prep_minutes'],
+              if (dish?['tags'] is List) 'tags': dish!['tags'],
+              if (dish?['ingredients'] is List)
+                'ingredients': dish!['ingredients'],
+              if (notes.isNotEmpty) 'notes': notes,
+            });
+          }
         }
       }
       days.add({
@@ -1090,50 +1188,69 @@ class ChatNotifier extends Notifier<ChatState> {
 
       if (!overwrite) {
         final existing = existingSnaps[dateKey];
+        // Accept both the new list shape (any non-empty array) and the
+        // legacy single-object shape (a Map). Either means the slot is
+        // already planned and we shouldn't overwrite without consent.
         final hasAny = existing != null &&
             ['breakfast', 'brunch', 'lunch', 'eve_snacks', 'dinner']
-                .any((k) => existing[k] is Map);
+                .any((k) {
+              final v = existing[k];
+              if (v is List) return v.isNotEmpty;
+              if (v is Map) return true;
+              return false;
+            });
         if (hasAny) {
           daysSkipped++;
           continue;
         }
       }
 
-      var wroteAny = false;
+      // Group dishes per slot for this date so a combo lunch (dal +
+      // chawal + roti) ends up as one write, not three competing ones.
+      final perSlot = <String, List<Map<String, dynamic>>>{};
       for (final slotEntry in slots) {
         if (slotEntry is! Map<String, dynamic>) continue;
         final slot = (slotEntry['slot'] ?? '').toString();
-        final dishName = (slotEntry['dish_name'] ?? '').toString().trim();
-        if (slot.isEmpty || dishName.isEmpty) continue;
+        if (slot.isEmpty) continue;
+        final names = _resolveDishNames(slotEntry);
+        if (names.isEmpty) continue;
 
-        var dishId = await _findDishByName(userId, dishName);
-        if (dishId == null) {
-          // Pull through any ingredients Claude flagged in the tool call
-          // so the catalog entry is useful next time she searches by
-          // ingredient. If empty, _autoCreateDishWithEnrichment fires a
-          // secondary Claude call to fill in details.
-          final rawUses = (slotEntry['uses_ingredients'] as List?)
-                  ?.cast<dynamic>() ??
-              const [];
-          final ingredients = rawUses
-              .map((e) => e.toString().trim())
-              .where((s) => s.isNotEmpty)
-              .toList();
-          dishId = await _autoCreateDishWithEnrichment(
-            userId,
-            dishName,
-            slot,
-            knownIngredients: ingredients,
-            fallbackTags: const ['custom', 'weekly-plan'],
-          );
-          dishesCreated++;
-        }
+        // `uses_ingredients` is only meaningful when Claude actually
+        // creates a new dish. We share the list across all dishes in
+        // this entry — auto-creation can ignore extras it doesn't need.
+        final rawUses =
+            (slotEntry['uses_ingredients'] as List?)?.cast<dynamic>() ??
+                const [];
+        final ingredients = rawUses
+            .map((e) => e.toString().trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
         final notes = (slotEntry['notes'] ?? '').toString().trim();
-        await _firestoreService.setMealSlot(userId, dateKey, slot, {
-          'dish_id': dishId,
-          if (notes.isNotEmpty) 'notes': notes,
-        });
-        await _firestoreService.incrementDishTimesUsed(userId, dishId);
+
+        for (var i = 0; i < names.length; i++) {
+          final name = names[i];
+          var dishId = await _findDishByName(userId, name);
+          if (dishId == null) {
+            dishId = await _autoCreateDishWithEnrichment(
+              userId,
+              name,
+              slot,
+              knownIngredients: ingredients,
+              fallbackTags: const ['custom', 'weekly-plan'],
+            );
+            dishesCreated++;
+          }
+          perSlot.putIfAbsent(slot, () => []).add({
+            'dish_id': dishId,
+            if (i == 0 && notes.isNotEmpty) 'notes': notes,
+          });
+          await _firestoreService.incrementDishTimesUsed(userId, dishId);
+        }
+      }
+      var wroteAny = false;
+      for (final slot in perSlot.keys) {
+        await _firestoreService.setMealSlot(
+            userId, dateKey, slot, perSlot[slot]!);
         wroteAny = true;
       }
       if (wroteAny) daysWritten++;

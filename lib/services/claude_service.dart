@@ -196,9 +196,16 @@ Thoughts/Notes → use save_thought tool
 
 Finance → use save_finance tool (both users)
 Goals → use save_goal tool
-Meals / meal plans (Rakhi only) — five coordinated tools:
-  - save_meal: plan ONE dish for ONE slot on ONE date. "Dinner tomorrow
-    is Paneer Butter Masala", "Monday breakfast Poha".
+Meals / meal plans (Rakhi only) — six coordinated tools:
+  - save_meal: plan a slot. ONE dish: "dinner tomorrow is Paneer Butter
+    Masala". COMBO: when she lists multiple dishes for the same slot
+    ("lunch is dal chawal roti sabzi salad", "breakfast aloo paratha
+    curd"), pass them all in `dish_names` so the slot stores every
+    component as one combo meal. save_meal OVERWRITES the slot.
+  - add_dish_to_meal: append ONE dish to a slot WITHOUT replacing the
+    existing dishes. Use for "add roti to lunch", "I'll have curd with
+    lunch too", "also salad with dinner". If she's not editing an
+    existing slot, prefer save_meal.
   - query_dishes: read her dish catalog BEFORE suggesting, so ideas
     lean on dishes she actually uses.
   - get_meal_plan_range: READ what's already planned for a date range.
@@ -659,12 +666,16 @@ ${formatThoughts(recentThoughts)}
       tools.add({
         'name': 'save_meal',
         'description':
-            "Plan or log a meal for a specific date + slot. Use when Rakhi "
-            "says 'dinner tomorrow is Paneer Butter Masala', 'Monday "
-            "breakfast Poha', 'brunch Sunday is fruit bowl', 'eve snacks "
-            "today was tea and samosa'. If the dish name isn't in her "
-            "catalog yet, pass it anyway — the handler does a fuzzy match "
-            "and auto-creates a custom dish entry if none matches.",
+            "Plan a meal slot — single dish OR combo. Use when Rakhi says "
+            "'dinner tomorrow is Paneer Butter Masala' (single), 'Monday "
+            "breakfast Poha', 'brunch Sunday is fruit bowl'. For COMBO "
+            "phrasing — 'lunch is dal chawal roti sabzi salad', 'aloo "
+            "paratha + curd for breakfast', 'rice and rajma' — pass every "
+            "component in `dish_names` so the slot stores the whole combo. "
+            "save_meal OVERWRITES the slot; for incremental adds use "
+            "add_dish_to_meal. If a dish name isn't in her catalog yet, "
+            "pass it anyway — the handler fuzzy-matches and auto-creates a "
+            "custom entry if none matches.",
         'input_schema': {
           'type': 'object',
           'properties': {
@@ -685,8 +696,59 @@ ${formatThoughts(recentThoughts)}
             'dish_name': {
               'type': 'string',
               'description':
-                  "Dish name exactly as Rakhi said it. Fuzzy match happens "
-                  "server-side; no need to normalise.",
+                  "ONE dish, exactly as Rakhi said it. Fuzzy match happens "
+                  "server-side. Use this for single-dish slots; for combos "
+                  "use `dish_names` instead.",
+            },
+            'dish_names': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description':
+                  "Multiple dishes that make up one combo meal in this "
+                  "slot — e.g. ['Dal Tadka', 'Jeera Rice', 'Phulka Roti', "
+                  "'Bhindi Masala', 'Kachumber Salad'] for a lunch thali. "
+                  "Order is preserved in the UI. Use this whenever Rakhi "
+                  "lists 2+ dishes for the same slot.",
+            },
+            'notes': {
+              'type': 'string',
+              'description':
+                  "Optional one-line note for the meal — attaches to the "
+                  "first dish. E.g. 'extra ghee', 'mild for baby'.",
+            },
+          },
+          'required': ['meal_type'],
+        },
+      });
+
+      tools.add({
+        'name': 'add_dish_to_meal',
+        'description':
+            "Append ONE dish to an already-planned slot WITHOUT replacing "
+            "what's there. Use when Rakhi says 'add roti to lunch', "
+            "'also add curd to dinner', 'I'll have a salad with lunch "
+            "too'. If she's setting a slot from scratch, prefer save_meal. "
+            "Auto-creates a catalog entry if the dish is new.",
+        'input_schema': {
+          'type': 'object',
+          'properties': {
+            'date': {
+              'type': 'string',
+              'description': 'YYYY-MM-DD. Defaults to today.',
+            },
+            'meal_type': {
+              'type': 'string',
+              'enum': [
+                'breakfast',
+                'brunch',
+                'lunch',
+                'eve_snacks',
+                'dinner',
+              ],
+            },
+            'dish_name': {
+              'type': 'string',
+              'description': 'The single dish to append.',
             },
             'notes': {'type': 'string'},
           },
@@ -894,7 +956,10 @@ ${formatThoughts(recentThoughts)}
             'plan': {
               'type': 'array',
               'description':
-                  'Your proposed plan. One entry per slot you are filling.',
+                  'Your proposed plan. One entry per slot you are filling. '
+                  'For combo meals (dal+chawal+roti+sabzi+salad), use the '
+                  '`dish_names` array on a single entry rather than '
+                  'repeating the slot — handler stores the whole combo.',
               'items': {
                 'type': 'object',
                 'properties': {
@@ -908,11 +973,22 @@ ${formatThoughts(recentThoughts)}
                       'dinner',
                     ],
                   },
-                  'dish_name': {'type': 'string'},
+                  'dish_name': {
+                    'type': 'string',
+                    'description': 'Single dish for this slot.',
+                  },
+                  'dish_names': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'description':
+                        'Multiple dishes that make up the combo for this '
+                        'slot. Use whenever the slot has 2+ components '
+                        '(e.g. dal + chawal + roti + sabzi + salad).',
+                  },
                   'notes': {'type': 'string'},
                   'reasoning': {'type': 'string'},
                 },
-                'required': ['slot', 'dish_name'],
+                'required': ['slot'],
               },
             },
           },
@@ -1071,7 +1147,19 @@ ${formatThoughts(recentThoughts)}
                             'dinner',
                           ],
                         },
-                        'dish_name': {'type': 'string'},
+                        'dish_name': {
+                          'type': 'string',
+                          'description': 'Single dish for this slot.',
+                        },
+                        'dish_names': {
+                          'type': 'array',
+                          'items': {'type': 'string'},
+                          'description':
+                              'Multiple dishes for one combo meal in this '
+                              'slot — e.g. dal + chawal + roti + sabzi + '
+                              'salad. Use whenever the slot has 2+ '
+                              'components.',
+                        },
                         'notes': {
                           'type': 'string',
                           'description':
@@ -1087,7 +1175,7 @@ ${formatThoughts(recentThoughts)}
                               'logic and not worry about spoilage.',
                         },
                       },
-                      'required': ['slot', 'dish_name'],
+                      'required': ['slot'],
                     },
                   },
                 },

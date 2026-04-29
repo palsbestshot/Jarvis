@@ -73,23 +73,27 @@ class _NutritionSheetState extends State<NutritionSheet> {
     });
 
     // Gather planned slots into the shape computeDayNutrition expects.
-    // We only include slots that have a dish_id AND a resolved Dish in
-    // the parent's cache — skipping empty / broken slots silently.
+    // Each slot can hold multiple dishes (e.g. dal + chawal + roti); we
+    // emit one `meals` entry per dish so Claude sees every component
+    // and sums kcal/macros correctly. Dishes that haven't resolved in
+    // the parent's cache are skipped silently.
     final meals = <Map<String, dynamic>>[];
     for (final slotId in MealSlotId.values) {
-      final slot = widget.plan.slot(slotId);
-      if (slot == null || slot.dishId.isEmpty) continue;
-      final dish = widget.dishById[slot.dishId];
-      if (dish == null) continue;
-      meals.add({
-        'slot': slotId.value,
-        'slot_label': slotId.label,
-        'dish_name': dish.name,
-        'prep_minutes': dish.prepMinutes,
-        'ingredients': dish.ingredients,
-        'tags': dish.tags,
-        if (slot.notes != null && slot.notes!.isNotEmpty) 'notes': slot.notes,
-      });
+      for (final entry in widget.plan.dishes(slotId)) {
+        if (entry.dishId.isEmpty) continue;
+        final dish = widget.dishById[entry.dishId];
+        if (dish == null) continue;
+        meals.add({
+          'slot': slotId.value,
+          'slot_label': slotId.label,
+          'dish_name': dish.name,
+          'prep_minutes': dish.prepMinutes,
+          'ingredients': dish.ingredients,
+          'tags': dish.tags,
+          if (entry.notes != null && entry.notes!.isNotEmpty)
+            'notes': entry.notes,
+        });
+      }
     }
 
     if (meals.isEmpty) {

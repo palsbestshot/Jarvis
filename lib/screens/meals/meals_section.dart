@@ -96,26 +96,10 @@ class _MealsSectionState extends State<MealsSection> {
           for (final raw in snapshot.data!) {
             final dateKey = (raw['date_key'] ?? raw['id'] ?? '').toString();
             if (dateKey.isEmpty) continue;
-            // Build a minimal MealPlanDay from the raw map — mealPlanRangeStream
-            // returns `id` via the helper; our fromDoc wants a DocumentSnapshot.
-            // We can just call the same field extraction inline.
-            final slots = <MealSlotId, MealSlot?>{};
-            for (final s in MealSlotId.values) {
-              final v = raw[s.value];
-              if (v is Map<String, dynamic>) {
-                try {
-                  slots[s] = MealSlot.fromMap(v);
-                } catch (_) {
-                  slots[s] = null;
-                }
-              } else {
-                slots[s] = null;
-              }
-            }
-            byDateKey[dateKey] = MealPlanDay(
-              dateKey: dateKey,
-              slots: slots,
-            );
+            // mealPlanRangeStream gives us flat maps, not DocumentSnapshots,
+            // so we use MealPlanDay.fromMap which understands both the new
+            // list-per-slot shape and the legacy single-object shape.
+            byDateKey[dateKey] = MealPlanDay.fromMap(dateKey, raw);
           }
         }
 
@@ -413,8 +397,7 @@ class _DayCell extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: MealSlotId.values.map((s) {
-                    final planned =
-                        plan!.slot(s) != null && plan!.slot(s)!.dishId.isNotEmpty;
+                    final planned = plan!.isPlanned(s);
                     return Container(
                       width: 4,
                       height: 4,

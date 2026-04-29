@@ -1062,24 +1062,64 @@ class FirestoreService {
     }).toList();
   }
 
-  /// Set or clear a single meal slot. Pass null to clear. Uses merge
-  /// writes so other slots in the same day doc are untouched.
+  /// Set or clear a single meal slot. Pass null (or an empty list) to
+  /// clear. Uses merge writes so other slots in the same day doc are
+  /// untouched.
   ///
-  /// slot is the MealSlotId.value string: 'breakfast'|'brunch'|'lunch'|
+  /// `slotValue` is a list of `{dish_id, notes?}` maps — one entry per
+  /// dish in this slot. A slot can hold multiple dishes (e.g. lunch =
+  /// dal + chawal + roti + sabzi + salad). Older docs that stored a
+  /// single object for the slot are still readable; the next write here
+  /// upgrades them to the list shape.
+  ///
+  /// `slot` is the MealSlotId.value string: 'breakfast'|'brunch'|'lunch'|
   /// 'eve_snacks'|'dinner'.
   Future<void> setMealSlot(
     String userId,
     String dateKey,
     String slot,
-    Map<String, dynamic>? slotValue,
+    List<Map<String, dynamic>>? slotValue,
   ) async {
     final ref = _mealPlansRef(userId).doc(dateKey);
-    // Firestore merge semantics: explicit null clears a field; a map
-    // overwrites it. We always write `date_key` + `updated_at` to be
-    // safe on first write.
+    // Firestore merge semantics: explicit null clears a field, a list
+    // overwrites it. Empty list normalises to null so the field is
+    // removed rather than left as an empty array.
+    final write = (slotValue == null || slotValue.isEmpty) ? null : slotValue;
     await ref.set({
       'date_key': dateKey,
-      slot: slotValue, // null → cleared
+      slot: write,
+      'updated_at': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Append one dish to a meal slot's list without touching the rest.
+  /// Reads the current slot to detect both the legacy single-object
+  /// shape and the new list shape; writes back as a list. Used by the
+  /// `add_dish_to_meal` Claude tool and the day-detail "+ Add another
+  /// dish" button.
+  Future<void> appendDishToMealSlot(
+    String userId,
+    String dateKey,
+    String slot,
+    Map<String, dynamic> dish,
+  ) async {
+    final ref = _mealPlansRef(userId).doc(dateKey);
+    final snap = await ref.get();
+    final existing = <Map<String, dynamic>>[];
+    if (snap.exists) {
+      final raw = snap.data()?[slot];
+      if (raw is List) {
+        for (final e in raw) {
+          if (e is Map<String, dynamic>) existing.add(e);
+        }
+      } else if (raw is Map<String, dynamic>) {
+        existing.add(raw);
+      }
+    }
+    existing.add(dish);
+    await ref.set({
+      'date_key': dateKey,
+      slot: existing,
       'updated_at': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

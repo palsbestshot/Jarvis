@@ -78,6 +78,31 @@ const EMAIL_SIGNATURE_HTML = [
   '+91 63059 74905',
 ].join('<br>');
 
+// ─── HELPER: Save assistant message to chat_history ─────────────────────────
+// Pallav asked for "notifications text coming in chat history also to view
+// it later". Replaces the older pending_messages → drain-on-tap flow:
+// every push body now lands in chat_history immediately, and chatStream on
+// the device picks it up in realtime. For structured briefings/wraps the
+// rich JSON goes here directly so the chat UI's morning_briefing /
+// evening_wrap card still renders. For plain notifications, sendFCMToUser
+// mirrors its body via this helper. Failures are logged but never block
+// the FCM send itself.
+async function saveChatMessage(userId, content, messageType) {
+  if (!content || !content.toString().trim()) return;
+  try {
+    await db.collection(`users/${userId}/chat_history`).add({
+      role: 'assistant',
+      content,
+      input_type: 'text',
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      message_type: messageType || 'notification',
+      source: 'push',
+    });
+  } catch (err) {
+    console.error(`[saveChatMessage] failed for ${userId}:`, err.message);
+  }
+}
+
 // ─── HELPER: Send FCM to user ───────────────────────────────────────────────
 // Rakhi's iPhone PWA registers a token in `device_tokens/web`; Pallav's
 // Android APK registers in `device_tokens/primary`. Both can coexist for
@@ -85,7 +110,15 @@ const EMAIL_SIGNATURE_HTML = [
 // the two well-known docs instead of scanning the whole collection, so
 // any stale per-token docs left over from older versions don't cause
 // duplicate pushes for Pallav.
-async function sendFCMToUser(userId, title, body, data = {}) {
+//
+// By default also mirrors the notification body to chat_history so the
+// message remains scrollable later. Pass { skipChatHistoryMirror: true }
+// when the caller has already written richer structured content via
+// saveChatMessage (e.g. morning_briefing JSON whose FCM body is just a
+// teaser like "Focus first: ..."). The mirror runs even when no device
+// tokens are registered, so the message is preserved regardless of
+// FCM delivery success.
+async function sendFCMToUser(userId, title, body, data = {}, opts = {}) {
   const tokensRef = db.collection(`users/${userId}/device_tokens`);
   const [primarySnap, webSnap] = await Promise.all([
     tokensRef.doc('primary').get(),
@@ -107,6 +140,11 @@ async function sendFCMToUser(userId, title, body, data = {}) {
       ref: webSnap.ref,
     });
   }
+
+  if (!opts.skipChatHistoryMirror) {
+    await saveChatMessage(userId, body, data.type || 'notification');
+  }
+
   if (targets.length === 0) return;
 
   await Promise.all(targets.map(async (t) => {
@@ -151,16 +189,6 @@ async function sendFCMToUser(userId, title, body, data = {}) {
       }
     }
   }));
-}
-
-// ─── HELPER: Save pending message to Firestore ───────────────────────────────
-async function savePendingMessage(userId, content, messageType) {
-  await db.collection(`users/${userId}/pending_messages`).add({
-    content,
-    message_type: messageType,
-    created_at: admin.firestore.FieldValue.serverTimestamp(),
-    fetched: false
-  });
 }
 
 // ─── MORNING QUOTES ARRAY (fallback if Claude unavailable) ──────────────────
@@ -417,17 +445,20 @@ exports.morningBriefing = functions.pubsub
         aiGenerated: !!ai,
       });
 
-      await savePendingMessage(userId, briefing, 'morning_briefing');
+      await saveChatMessage(userId, briefing, 'morning_briefing');
       // Notification body leads with the focus task if we got one from
       // Claude — makes the lock-screen peek actionable.
       const notifBody = focusOneThing
         ? `Focus first: ${focusOneThing}`
         : `${taskCount} task${taskCount !== 1 ? 's' : ''} due today`;
+      // skipChatHistoryMirror: structured JSON already saved above; the
+      // FCM body is just a teaser and would duplicate as plain text.
       await sendFCMToUser(
         userId,
         'Good Morning ☀️',
         notifBody,
-        { type: 'briefing' }
+        { type: 'briefing' },
+        { skipChatHistoryMirror: true }
       );
     }
     return null;
@@ -454,7 +485,8 @@ exports.midMorningNudge = functions.pubsub
 
       if (doneSnap.empty) {
         const message = "Hey, morning's moving fast — want to knock out your first task?";
-        await savePendingMessage(userId, message, 'nudge');
+        // sendFCMToUser auto-mirrors body to chat_history (data.type='nudge'
+        // becomes message_type='nudge'), so no explicit saveChatMessage needed.
         await sendFCMToUser(userId, 'JARVIS', message, { type: 'nudge' });
       }
     }
@@ -529,15 +561,17 @@ exports.eveningWrap = functions.pubsub
         isEvening: true,
       });
 
-      await savePendingMessage(userId, message, 'evening_wrap');
+      await saveChatMessage(userId, message, 'evening_wrap');
       const notifBody = tomorrowFirstTask
         ? `Tomorrow start with: ${tomorrowFirstTask}`
         : `Today: ${done}/${total} done · ${tomorrowTasks.length} on deck tomorrow`;
+      // skipChatHistoryMirror: structured JSON already saved above.
       await sendFCMToUser(
         userId,
         'JARVIS Evening',
         notifBody,
-        { type: 'briefing' }
+        { type: 'briefing' },
+        { skipChatHistoryMirror: true }
       );
     }
     return null;
@@ -572,8 +606,17 @@ exports.weeklySummary = functions.pubsub
 
       const message = `Weekly summary: ${doneSnap.size} tasks completed this week. ${thoughtsSnap.size} thoughts saved. Good work — what's the plan for next week?`;
 
-      await savePendingMessage(userId, message, 'weekly_summary');
-      await sendFCMToUser(userId, 'JARVIS Weekly', message, { type: 'briefing' });
+      // Explicit saveChatMessage so chat_history keeps message_type
+      // 'weekly_summary' (FCM data.type stays 'briefing' for backward
+      // compat with on-device routing).
+      await saveChatMessage(userId, message, 'weekly_summary');
+      await sendFCMToUser(
+        userId,
+        'JARVIS Weekly',
+        message,
+        { type: 'briefing' },
+        { skipChatHistoryMirror: true }
+      );
     }
     return null;
   });
